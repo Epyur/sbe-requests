@@ -40,10 +40,102 @@ export class RequestsDatabase {
           methods: Array.isArray(parsed.methods) ? parsed.methods : [],
           objects: Array.isArray(parsed.objects) ? parsed.objects : [],
         };
+        // Миграция могла удалить/разделить заявки — сразу персистим, иначе
+        // устаревшие строки (legacy methods[]) остаются в файле и рендерятся
+        // как undefined (метод заявки теперь лежит в самой строке).
+        if (this.migrateLegacyRequests()) {
+          await this.save();
+        }
       }
     } catch (e: unknown) {
       console.error('Заявки: не удалось прочитать БД:', errorMessage(e));
     }
+  }
+
+  /** Одноразовая миграция кэша: легaси-заявки с `methods[]` (старая модель) →
+   * N под-заявок, где `method_id`/`customer_number`/`lab_number` в самой строке.
+   * Идемпотентна: после конвертации у записи нет поля `methods`.
+   * Возвращает true, если данные изменились (нужен save). */
+  private migrateLegacyRequests(): boolean {
+    interface LegacyMethod { method_id: number; customer_number: string; lab_number: string; }
+    type LegacyRequest = LabRequest & { methods?: LegacyMethod[] };
+
+    if (!this.data.requests.some(r => Array.isArray((r as LegacyRequest).methods) && ((r as LegacyRequest).methods?.length ?? 0) > 0)) {
+      return false;
+    }
+
+    const migrated: LabRequest[] = [];
+    let dropped = 0;
+    let converted = 0;
+    for (const raw of this.data.requests) {
+      const legacy = raw as LegacyRequest;
+      const methods = Array.isArray(legacy.methods) ? legacy.methods : [];
+      if (methods.length === 0) {
+        migrated.push(raw);
+        continue;
+      }
+      const base = { ...legacy };
+      delete (base as Partial<LegacyRequest>).methods;
+
+      // Уже синхронизированные со старой моделью мульти-методные заявки на сервере
+      // раскатываются в новые под-заявки с новыми id — локальная копия устарела,
+      // её заменяет pull. Держим только синхронизированные однометодные.
+      if (base.sync_status === 'synced') {
+        if (methods.length === 1) {
+          base.method_id = methods[0].method_id;
+          base.customer_number = methods[0].customer_number;
+          base.lab_number = methods[0].lab_number;
+          migrated.push(base);
+          converted++;
+        } else {
+          dropped++;
+        }
+        continue;
+      }
+
+      // Локальная (не отправленная) мульти-методная заявка — делим на N под-заявок
+      // с общим group_key: сервер выделит один NNN на всю группу.
+      const groupKey = String(Date.now()).slice(0, 3) + Math.floor(Math.random() * 1000);
+      const firstId = base.id;
+      methods.forEach((m, i) => {
+        const sub = {
+          ...base,
+          id: i === 0 ? firstId : -(Date.now() + i),
+          method_id: m.method_id,
+          customer_number: m.customer_number,
+          lab_number: m.lab_number,
+          group_key: methods.length > 1 ? groupKey : undefined,
+        };
+        const clean = { ...sub };
+        delete (clean as Partial<LegacyRequest>).methods;
+        migrated.push(clean as LabRequest);
+        converted++;
+      });
+    }
+
+    if (dropped > 0) {
+      console.warn('Заявки: кэш обновлён под модель «1 заявка = 1 метод»; синхронизированные мульти-методные заявки будут перечитаны с сервера при pull.');
+    }
+    this.data.requests = migrated;
+    return dropped > 0 || converted > 0;
+  }
+
+  /** Убирает синхронизированные заявки, которых больше нет на сервере (сервер — канон).
+   * Локально-изменённые (`sync_status === 'local'`) не трогает. Возвращает число удалённых. */
+  pruneSyncedNotInServer(serverIds: Set<number>): number {
+    const keep: LabRequest[] = [];
+    let removed = 0;
+    for (const r of this.data.requests) {
+      if (r.sync_status === 'synced' && !serverIds.has(r.id)) {
+        removed++;
+        continue;
+      }
+      keep.push(r);
+    }
+    if (removed > 0) {
+      this.data.requests = keep;
+    }
+    return removed;
   }
 
   private async ensureDataDir(): Promise<void> {

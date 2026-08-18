@@ -50,14 +50,16 @@ LabObject{ id, name, description, characteristics: ObjectCharacteristics, create
 LabProject{ id, parent_id, code, name, description, is_ekn, owner_email, created_at, updated_at }
 GroupMember{ email, role }
 LabGroup  { id, name, owner_email, members: GroupMember[], created_at, updated_at }
-RequestMethod{ method_id, customer_number, lab_number }
 RequestFile{ file_key, file_name, file_size, file_url }
 LabRequest{ id, number_seq, number_year, title, description, object_id, project_id, group_id,
-            owner_email, status, priority: 'normal'|'critical'|'blocker',
+            owner_email, status: 'new'|'received'|'processing'|'completed',
+            priority: 'normal'|'critical'|'blocker',
             test_purpose: ''|'quality_control'|'rnd'|'certification'|'declaration',
             external_lab_id: number, ekn: string,
-            methods: RequestMethod[], files: RequestFile[],
-            created_at, updated_at, sync_status }
+            method_id: number, customer_number: string, lab_number: string,
+            group_key?: string,   // только у локальных новых под-заявок одного создания
+            parent_id?: number,   // только у локальных черновиков «добавление метода»
+            files: RequestFile[], created_at, updated_at, sync_status }
 ```
 
 Примечания:
@@ -65,11 +67,19 @@ LabRequest{ id, number_seq, number_year, title, description, object_id, project_
   если по ЕКН нет данных в PIM — заказчик заполняет название и целевые характеристики вручную
   (обязательно), и они становятся названием заявки.
 - `test_purpose`: по умолчанию `quality_control` («Текущий контроль») для новых заявок.
+- **1 заявка = 1 метод** (декомпозиция, `docs/superpowers/specs/2026-08-18-sbe-requests-per-method-design.md`):
+  метод и оба номера лежат прямо в строке `requests`, таблица `request_methods` упразднена.
+  Под-заявки одного «создания» делят общий NNN (`number_seq`+`number_year`) и связываются
+  только им (без шапки); у локальных новых под-заявок — общий `group_key` (сервер выделяет
+  один NNN на группу).
 
-PushRequest (тело `POST /sync/push`, заявки): `{id, client_id, title, description, object_id,
-project_id, group_id, status, priority, test_purpose, external_lab_id, ekn, updated_at,
-method_ids}`. `id=0` — новая заявка (сервер присваивает NNN и номера, отвечает в `created`
-с `client_id` и полной заявкой — клиент заменяет локальную запись через `replaceLocalRequest`).
+PushRequest (тело `POST /sync/push`, заявки): `{id, client_id, group_key, parent_id, title,
+description, object_id, project_id, group_id, status, priority, test_purpose,
+external_lab_id, ekn, updated_at, method_id}`. `id=0` — новая заявка: без `parent_id` сервер
+присваивает NNN (под-заявки с одинаковым `group_key` получают один NNN); с `parent_id` —
+**под-заявка делит NNN родителя** (только родитель в статусе `new`, владелец/admin; иначе —
+новый NNN). Ответ `{inserted, updated, created:[{client_id, group_key, request}]}` — клиент
+заменяет локальные записи через `replaceLocalRequest(client_id, request)`.
 
 ## Автопроект-ЕКН (сервер)
 
@@ -129,5 +139,13 @@ method_ids}`. `id=0` — новая заявка (сервер присваив�
   - **Внешняя лаборатория**: чекбокс «Провести испытания во внешней лаборатории» → select
     внешних лабораторий (`labs.type='external'`).
   - **Методы** (группы по лабораториям) + **Определяемые показатели** — чекбоксы из
-    `method.determinable_indicators` выбранных методов.
+    `method.determinable_indicators` выбранных методов. При создании с несколькими методами
+    формируется N под-заявок с общим NNN (общий `group_key`).
+  - **Редактирование заявки**: только статус `new`. Метод зафиксирован; блок
+    **«➕ Добавить методы (создаст под-заявки с тем же номером)»** — отмеченные методы
+    создают под-заявки с `parent_id` (делят NNN родителя; `requestNumber`/`buildDraftNumbers`
+    показывают превью номера до синхронизации).
+- Кнопка **«?»** рядом с «🔄» — открывает справку `Заявки на испытания — инструкция.md`
+  (создаётся в корне вольта из `src/ui/help.ts`, если отсутствует). Редактирование проекта —
+  кнопка «✎» в дереве проектов (владелец/admin, `PATCH /projects/{id}`).
 - Настройки: `apiUrl` + раздел «Права доступа» (роли + общий доступ, admin).

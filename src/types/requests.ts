@@ -85,13 +85,6 @@ export interface LabGroup {
   updated_at: string;
 }
 
-/** Метод заявки с присвоенными номерами. */
-export interface RequestMethod {
-  method_id: number;
-  customer_number: string;
-  lab_number: string;
-}
-
 /** Файл заявки (в S3). */
 export interface RequestFile {
   file_key: string;
@@ -100,7 +93,10 @@ export interface RequestFile {
   file_url: string;
 }
 
-/** Заявка на испытания. updated_at — для LWW (сервер авторитетен). */
+/** Заявка на испытания. 1 заявка = 1 метод (метод и номера прямо в строке).
+ * Под-заявки одной группы делят общий NNN (одинаковые number_seq + number_year).
+ * group_key — только для новых локальных заявок (объединяет под-заявки одного
+ * создания в офлайне, чтобы сервер выделил один NNN на группу). updated_at — для LWW. */
 export interface LabRequest {
   id: number;
   number_seq: number;
@@ -114,13 +110,23 @@ export interface LabRequest {
   status: string;
   /** Приоритет: normal | critical | blocker. */
   priority: string;
-  /** Цель испытания: rnd | certification | declaration. */
+  /** Цель испытания: quality_control | rnd | certification | declaration. */
   test_purpose: string;
   /** Внешняя лаборатория (0 = внутренняя; >0 = labs.id с type=external). */
   external_lab_id: number;
   /** Номер ЕКН (для автопроекта, если проект не выбран). */
   ekn: string;
-  methods: RequestMethod[];
+  /** Метод испытаний (1 заявка = 1 метод). */
+  method_id: number;
+  /** Номер заказчику: {projectCode}-{NNN}/{yyyy}-{labCode}-{methodCode}. */
+  customer_number: string;
+  /** Номер лаборатории: {NNN}/{yyyy}-{methodCode}. */
+  lab_number: string;
+  /** Общий ключ группы под-заявок (только у новых локальных). */
+  group_key?: string;
+  /** Родительская заявка: под-заявка создаётся добавлением метода и делит
+   * её NNN (только пока родитель в статусе new). Только у локальных черновиков. */
+  parent_id?: number;
   files: RequestFile[];
   created_at: string;
   updated_at: string;
@@ -151,7 +157,7 @@ export interface PullResponse {
 export interface PushResponse {
   inserted: number;
   updated: number;
-  created: Array<{ client_id: number; request: LabRequest }>;
+  created: Array<{ client_id: number; group_key?: string; request: LabRequest }>;
 }
 
 /** Ответ сервера на загрузку файла. */

@@ -563,6 +563,19 @@
   font-weight: 600;
 }
 
+.tn-req-tree-edit {
+  float: right;
+  margin-left: 6px;
+  font-size: var(--font-smallest);
+  line-height: 1;
+  padding: 1px 4px;
+  opacity: 0.55;
+}
+
+.tn-req-tree-edit:hover {
+  opacity: 1;
+}
+
 .tn-req-row {
   cursor: pointer;
 }

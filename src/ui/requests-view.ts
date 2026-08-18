@@ -1,13 +1,15 @@
-import { ItemView, Notice, WorkspaceLeaf } from 'obsidian';
+import { ItemView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type SbeRequestsPlugin from '../main';
-import type { LabProject, LabRequest, RequestMethod } from '../types/requests';
+import type { LabProject, LabRequest } from '../types/requests';
 import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
+import { REQUESTS_HELP_MD, REQUESTS_HELP_PATH } from './help';
 
 export const SBE_REQUESTS_VIEW_TYPE = 'sbe-requests-view';
 
 const STATUS_LABELS: Record<string, string> = {
   new: '🟢 Новая',
+  received: '🔵 Принята',
   processing: '🟡 В работе',
   completed: '✅ Завершена',
 };
@@ -84,6 +86,8 @@ export class RequestsView extends ItemView {
     refBtn.addEventListener('click', () => this.renderReferencesView());
     const syncBtn = header.createEl('button', { text: '🔄', cls: 'tn-btn tn-btn-ghost' });
     syncBtn.addEventListener('click', () => { void this.syncAndRender(); });
+    const helpBtn = header.createEl('button', { text: '?', cls: 'tn-btn tn-btn-ghost', attr: { title: 'Инструкция по заполнению заявок' } });
+    helpBtn.addEventListener('click', () => { void this.openHelp(); });
 
     const searchInput = container.createEl('input', {
       attr: { type: 'text', placeholder: '🔍 Поиск по названию...' },
@@ -120,7 +124,7 @@ export class RequestsView extends ItemView {
     const table = listDiv.createEl('table', { cls: 'tn-table' });
     const thead = table.createEl('thead');
     const headerRow = thead.createEl('tr');
-    const headers = ['Номер заявки', 'Объект', 'Статус', 'Обновлено'];
+    const headers = ['Номер заявки', 'Метод', 'Объект', 'Статус', 'Обновлено'];
     for (const h of headers) headerRow.createEl('th').setText(h);
 
     const tbody = table.createEl('tbody');
@@ -130,8 +134,8 @@ export class RequestsView extends ItemView {
       row.addEventListener('click', () => this.renderRequestDetail(r));
 
       const numCell = row.createEl('td');
-      const firstMethod = r.methods && r.methods.length > 0 ? r.methods[0] : null;
-      numCell.setText(firstMethod?.customer_number || '—');
+      numCell.setText(r.customer_number || '—');
+      row.createEl('td').setText(this.methodName(r.method_id));
       row.createEl('td').setText(this.objectName(r.object_id));
       row.createEl('td').setText(STATUS_LABELS[r.status] || r.status);
       row.createEl('td').setText(this.formatDate(r.updated_at));
@@ -159,12 +163,22 @@ export class RequestsView extends ItemView {
     const item = (label: string, projectId: number, depth: number, isRoot: boolean): void => {
       const row = container.createDiv({ cls: 'tn-req-tree-item' });
       if (depth > 0) row.style.paddingLeft = `${8 + depth * 14}px`;
-      row.setText(label);
+      row.createEl('span', { text: label });
       if (this.selectedProjectId === projectId) row.addClass('tn-req-tree-selected');
       row.addEventListener('click', () => {
         this.selectedProjectId = projectId;
         this.renderView();
       });
+      if (projectId > 0 && this.canEdit) {
+        const proj = this.plugin.requestsDb.getProjects().find(p => p.id === projectId);
+        if (proj && (proj.owner_email === this.myEmail || this.isAdmin)) {
+          const editBtn = row.createEl('button', { text: '✎', cls: 'tn-btn tn-btn-ghost tn-req-btn-sm tn-req-tree-edit' });
+          editBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            this.showEditProjectForm(proj);
+          });
+        }
+      }
     };
 
     item('🗂 Без проекта', 0, 0, true);
@@ -235,7 +249,7 @@ export class RequestsView extends ItemView {
     container.createEl('h3', { text: this.objectName(req.object_id) || req.title });
 
     const meta = container.createDiv({ cls: 'tn-req-meta tn-req-mb12' });
-    meta.createDiv({ text: `№ ${req.number_seq}/${req.number_year}` });
+    meta.createDiv({ text: `№ ${this.requestNumber(req)}` });
     meta.createDiv({ text: `📁 Проект: ${this.projectName(req.project_id)}` });
     meta.createDiv({ text: `👥 Группа: ${this.groupName(req.group_id)}` });
     meta.createDiv({ text: `🔬 Объект: ${this.objectName(req.object_id)}` });
@@ -259,24 +273,20 @@ export class RequestsView extends ItemView {
       container.createDiv({ cls: 'tn-req-meta tn-req-mb12' }).createDiv({ text: `📝 ${req.description}` });
     }
 
-    if (req.methods && req.methods.length > 0) {
+    if (req.method_id > 0) {
       const methodsDiv = container.createDiv({ cls: 'tn-req-mb12' });
-      methodsDiv.createDiv({ cls: 'tn-req-meta', text: 'Методы испытаний:' });
+      methodsDiv.createDiv({ cls: 'tn-req-meta tn-req-mb4', text: `🔬 Метод испытаний: ${this.methodName(req.method_id)}` });
       const mTable = methodsDiv.createEl('table', { cls: 'tn-table' });
       const mThead = mTable.createEl('thead');
       const mHr = mThead.createEl('tr');
-      mHr.createEl('th').setText('Метод');
       mHr.createEl('th').setText('Номер заказчику');
       mHr.createEl('th').setText('Номер лаборатории');
       const mTbody = mTable.createEl('tbody');
-      for (const m of req.methods) {
-        const row = mTbody.createEl('tr');
-        row.createEl('td').setText(this.methodName(m.method_id));
-        row.createEl('td').setText(m.customer_number || '—');
-        row.createEl('td').setText(m.lab_number || '—');
-      }
+      const mRow = mTbody.createEl('tr');
+      mRow.createEl('td').setText(req.customer_number || '—');
+      mRow.createEl('td').setText(req.lab_number || '—');
 
-      const indicators = this.indicatorsForMethods(req.methods.map(m => m.method_id));
+      const indicators = this.indicatorsForMethods([req.method_id]);
       if (indicators.length > 0) {
         const indDiv = methodsDiv.createDiv({ cls: 'tn-req-meta tn-req-mt8' });
         indDiv.setText(`Определяемые показатели: ${indicators.join(', ')}`);
@@ -319,6 +329,7 @@ export class RequestsView extends ItemView {
     if (this.canEdit) {
       const statusSelect = btnRow.createEl('select', { cls: 'tn-req-select tn-req-status-select' });
       statusSelect.createEl('option', { value: 'new', text: '🟢 Новая' });
+      statusSelect.createEl('option', { value: 'received', text: '🔵 Принята' });
       statusSelect.createEl('option', { value: 'processing', text: '🟡 В работе' });
       statusSelect.createEl('option', { value: 'completed', text: '✅ Завершена' });
       statusSelect.value = req.status;
@@ -341,8 +352,44 @@ export class RequestsView extends ItemView {
   }
 
   private methodName(methodId: number): string {
+    if (!methodId || methodId <= 0) return '—';
     const m = this.plugin.requestsDb.getMethods().find(md => md.id === methodId);
     return m ? `${m.code}${m.name ? ' — ' + m.name : ''}` : `#${methodId}`;
+  }
+
+  /** Номер заявки для отображения. У черновика-под-заявки (number_seq = 0,
+   * есть parent_id) показывается номер родителя, чей NNN она разделит. */
+  private requestNumber(req: LabRequest): string {
+    if (req.number_seq > 0) return `${req.number_seq}/${req.number_year}`;
+    if (req.parent_id) {
+      const parent = this.plugin.requestsDb.getById(req.parent_id);
+      if (parent && parent.number_seq > 0) return `${parent.number_seq}/${parent.number_year}`;
+    }
+    return '—';
+  }
+
+  private projectCode(projectId: number): string {
+    if (projectId <= 0) return '0';
+    const p = this.plugin.requestsDb.getProjects().find(pr => pr.id === projectId);
+    return p ? p.code : '0';
+  }
+
+  /** Превью номеров под-заявки (как сервер buildNumbers): тот же NNN, что у родителя,
+   * но код нового метода. Нужно, чтобы в таблице черновик сразу показывал номера. */
+  private buildDraftNumbers(req: LabRequest): { customer: string; lab: string } | null {
+    if (!req.parent_id) return null;
+    const parent = this.plugin.requestsDb.getById(req.parent_id);
+    if (!parent || parent.number_seq <= 0) return null;
+    const m = this.plugin.requestsDb.getMethods().find(md => md.id === req.method_id);
+    if (!m) return null;
+    const l = this.plugin.requestsDb.getLabs().find(lb => lb.id === m.lab_id);
+    const labCode = l ? l.code : '';
+    const seq = parent.number_seq;
+    const year = parent.number_year;
+    return {
+      customer: `${this.projectCode(req.project_id)}-${seq}/${year}-${labCode}-${m.code}`,
+      lab: `${seq}/${year}-${m.code}`,
+    };
   }
 
   private priorityLabel(priority: string): string {
@@ -575,7 +622,7 @@ export class RequestsView extends ItemView {
     if (existing) groupSelect.value = String(existing.group_id);
 
     // Методы (чекбоксы, сгруппированы по лабораториям)
-    const methodsLabel = container.createEl('label', { text: 'Методы испытаний', cls: 'tn-req-label' });
+    const methodsLabel = container.createEl('label', { text: existing ? 'Метод испытаний (текущий)' : 'Методы испытаний', cls: 'tn-req-label' });
     const methodsDiv = container.createDiv({ cls: 'tn-req-methods tn-req-mb12' });
     const methods = this.plugin.requestsDb.getMethods();
     const labs = this.plugin.requestsDb.getLabs();
@@ -587,7 +634,17 @@ export class RequestsView extends ItemView {
       list.push(m);
       methodsByLab.set(key, list);
     }
-    const selected = new Set(existing ? existing.methods.map(m => m.method_id) : []);
+    const selected = new Set(existing ? [existing.method_id] : []);
+    // Добавление методов доступно только к заявке в статусе «Новая» с присвоенным номером.
+    const canAdd = !!(existing && existing.status === 'new' && existing.number_seq > 0);
+    const usedMethodIds = new Set<number>();
+    if (existing && existing.number_seq > 0) {
+      for (const r of this.plugin.requestsDb.getAll()) {
+        if (r.number_seq === existing.number_seq && r.number_year === existing.number_year && r.method_id > 0) {
+          usedMethodIds.add(r.method_id);
+        }
+      }
+    }
     for (const [labId, list] of methodsByLab) {
       const lab = labById.get(labId);
       const labDiv = methodsDiv.createDiv({ cls: 'tn-req-meta tn-req-mb4' });
@@ -596,15 +653,39 @@ export class RequestsView extends ItemView {
         const wrapper = methodsDiv.createEl('label', { cls: 'tn-req-filter-label' });
         const cb = wrapper.createEl('input', { attr: { type: 'checkbox', value: String(m.id) }, cls: 'tn-req-cb' });
         cb.checked = selected.has(m.id);
-        cb.addEventListener('change', () => this.updateIndicators(methodsDiv, indicatorsDiv));
+        if (existing) {
+          // Метод заявки фиксирован: 1 заявка = 1 метод (меняется только созданием новой заявки).
+          cb.disabled = true;
+        }
+        cb.addEventListener('change', () => this.updateIndicators(methodsDiv, addDiv, indicatorsDiv));
         wrapper.createEl('span').setText(` ${m.code} — ${m.name}`);
       }
+    }
+
+    // Добавление методов к существующей заявке: каждая добавленная под-заявка
+    // получает тот же номер (NNN), но новый метод (сервер переиспользует NNN).
+    const addLabel = container.createEl('label', { text: '➕ Добавить методы (создаст под-заявки с тем же номером)', cls: 'tn-req-label' });
+    const addDiv = container.createDiv({ cls: 'tn-req-methods tn-req-mb12' });
+    if (canAdd) {
+      const addable = methods.filter(m => !usedMethodIds.has(m.id));
+      if (addable.length === 0) {
+        addDiv.createDiv({ cls: 'tn-req-meta' }).setText('Все методы уже добавлены к этой заявке');
+      }
+      for (const m of addable) {
+        const wrapper = addDiv.createEl('label', { cls: 'tn-req-filter-label' });
+        const cb = wrapper.createEl('input', { attr: { type: 'checkbox', value: String(m.id) }, cls: 'tn-req-cb' });
+        cb.addEventListener('change', () => this.updateIndicators(methodsDiv, addDiv, indicatorsDiv));
+        wrapper.createEl('span').setText(` ${m.code} — ${m.name}`);
+      }
+    } else {
+      addLabel.hide();
+      addDiv.hide();
     }
 
     // Определяемые показатели (из выбранных методов)
     const indicatorsLabel = container.createEl('label', { text: 'Определяемые показатели', cls: 'tn-req-label' });
     const indicatorsDiv = container.createDiv({ cls: 'tn-req-methods tn-req-mb12' });
-    this.updateIndicators(methodsDiv, indicatorsDiv);
+    this.updateIndicators(methodsDiv, addDiv, indicatorsDiv);
 
     const btnRow = container.createDiv({ cls: 'tn-req-header tn-req-mt12' });
     const saveBtn = btnRow.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });
@@ -688,19 +769,59 @@ export class RequestsView extends ItemView {
           existing.test_purpose = testPurpose;
           existing.external_lab_id = externalLabId;
           existing.ekn = isEknMode ? ekn : '';
-          existing.methods = methodIds.map(mid => {
-            const prev = existing.methods.find(m => m.method_id === mid);
-            return prev ? { ...prev } : { method_id: mid, customer_number: '', lab_number: '' };
-          });
           existing.sync_status = 'local';
           existing.updated_at = now;
           this.plugin.requestsDb.update(existing.id, existing);
+
+          // Добавление методов: каждая под-заявка наследует поля и получает тот же NNN
+          // (сервер переиспользует номер родителя, пока он в статусе new).
+          const addedIds = Array.from(methodsDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked:not(:disabled)'))
+            .map(cb => Number(cb.value)).filter(v => v > 0);
+          let addedCount = 0;
+          if (addedIds.length > 0) {
+            addedIds.forEach((mid, i) => {
+              const draft: LabRequest = {
+                id: -(Date.now() + i),
+                number_seq: 0,
+                number_year: 0,
+                parent_id: existing.id,
+                title: objectName,
+                description: descInput.value.trim(),
+                object_id: objectId,
+                project_id: Number(projectSelect.value),
+                group_id: Number(groupSelect.value),
+                owner_email: this.myEmail,
+                status: 'new',
+                priority,
+                test_purpose: testPurpose,
+                external_lab_id: externalLabId,
+                ekn: isEknMode ? ekn : '',
+                method_id: mid,
+                customer_number: '',
+                lab_number: '',
+                files: [],
+                created_at: now,
+                updated_at: now,
+                sync_status: 'local',
+              };
+              const nums = this.buildDraftNumbers(draft);
+              if (nums) {
+                draft.customer_number = nums.customer;
+                draft.lab_number = nums.lab;
+              }
+              this.plugin.requestsDb.add(draft);
+              addedCount++;
+            });
+          }
           await this.plugin.requestsDb.save();
-          new Notice('Заявка обновлена (будет отправлена при синхронизации)');
+          new Notice(addedCount > 0
+            ? `Заявка обновлена; добавлено под-заявок по методам: ${addedCount} (отправятся при синхронизации)`
+            : 'Заявка обновлена (будет отправлена при синхронизации)');
           this.renderRequestDetail(existing);
         } else {
-          const newReq: LabRequest = {
-            id: Date.now() + Math.floor(Math.random() * 1000),
+          // Один запрос → N под-заявок с общим group_key (сервер выделит один NNN группе).
+          const groupKey = String(Date.now()) + '-' + Math.floor(Math.random() * 1000);
+          const base: Partial<LabRequest> = {
             number_seq: 0,
             number_year: 0,
             title: objectName,
@@ -714,15 +835,26 @@ export class RequestsView extends ItemView {
             test_purpose: testPurpose,
             external_lab_id: externalLabId,
             ekn: isEknMode ? ekn : '',
-            methods: methodIds.map(mid => ({ method_id: mid, customer_number: '', lab_number: '' })),
             files: [],
             created_at: now,
             updated_at: now,
             sync_status: 'local',
           };
-          this.plugin.requestsDb.add(newReq);
+          methodIds.forEach((mid, i) => {
+            const newReq: LabRequest = {
+              ...(base as LabRequest),
+              id: i === 0 ? Date.now() + Math.floor(Math.random() * 1000) : -(Date.now() + i),
+              method_id: mid,
+              customer_number: '',
+              lab_number: '',
+              group_key: methodIds.length > 1 ? groupKey : undefined,
+            };
+            this.plugin.requestsDb.add(newReq);
+          });
           await this.plugin.requestsDb.save();
-          new Notice('Заявка создана (будет отправлена при синхронизации)');
+          new Notice(methodIds.length > 1
+            ? `Заявка создана как ${methodIds.length} под-заявки (по методу), будут отправлены при синхронизации`
+            : 'Заявка создана (будет отправлена при синхронизации)');
           this.renderView();
         }
       } catch (e: unknown) {
@@ -758,9 +890,13 @@ export class RequestsView extends ItemView {
   }
 
   /** Перерисовывает чекбоксы определяемых показателей по выбранным методам. */
-  private updateIndicators(methodsDiv: HTMLElement, indicatorsDiv: HTMLElement): void {
-    const checked = Array.from(methodsDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
-      .map(cb => Number(cb.value));
+  private updateIndicators(methodsDiv: HTMLElement, addDiv: HTMLElement, indicatorsDiv: HTMLElement): void {
+    const checked: number[] = [];
+    for (const src of [methodsDiv, addDiv]) {
+      for (const cb of Array.from(src.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))) {
+        checked.push(Number(cb.value));
+      }
+    }
     const indicators = this.indicatorsForMethods(checked);
     indicatorsDiv.empty();
     if (indicators.length === 0) {
@@ -829,6 +965,53 @@ export class RequestsView extends ItemView {
       } catch (e: unknown) {
         new Notice(`Ошибка: ${errorMessage(e)}`);
         saveBtn.setText('💾 Создать проект');
+        saveBtn.removeAttribute('disabled');
+      }
+    });
+  }
+
+  private showEditProjectForm(project: LabProject): void {
+    const container = this.containerElContent;
+    container.empty();
+
+    const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
+    backBtn.addEventListener('click', () => this.renderView());
+
+    container.createEl('h3', { text: `📁 Проект: ${project.code}` });
+
+    const nameLabel = container.createEl('label', { text: 'Название', cls: 'tn-req-label' });
+    const nameInput = container.createEl('input', { attr: { type: 'text' }, cls: 'tn-req-input' });
+    nameInput.value = project.name || '';
+
+    const descLabel = container.createEl('label', { text: 'Описание', cls: 'tn-req-label' });
+    const descInput = container.createEl('textarea', { cls: 'tn-req-textarea' });
+    descInput.value = project.description || '';
+
+    const codeLabel = container.createEl('label', { text: 'Код проекта (уникальный)', cls: 'tn-req-label' });
+    const codeInput = container.createEl('input', { attr: { type: 'text', placeholder: 'Например: ЕКН-2026-001' }, cls: 'tn-req-input' });
+    codeInput.value = project.code;
+
+    const btnRow = container.createDiv({ cls: 'tn-req-header tn-req-mt12' });
+    const saveBtn = btnRow.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });
+    const cancelBtn = btnRow.createEl('button', { text: 'Отмена', cls: 'tn-btn tn-btn-ghost' });
+    cancelBtn.addEventListener('click', () => this.renderView());
+
+    saveBtn.addEventListener('click', async () => {
+      const code = codeInput.value.trim();
+      if (!code) { new Notice('Введите код проекта'); return; }
+      saveBtn.setText('⏳');
+      saveBtn.setAttr('disabled', 'true');
+      try {
+        await this.plugin.syncService.updateProject(project.id, {
+          code,
+          name: nameInput.value.trim(),
+          description: descInput.value.trim(),
+        });
+        new Notice('Проект обновлён');
+        await this.syncAndRender();
+      } catch (e: unknown) {
+        new Notice(`Ошибка: ${errorMessage(e)}`);
+        saveBtn.setText('💾 Сохранить');
         saveBtn.removeAttribute('disabled');
       }
     });
@@ -1057,6 +1240,22 @@ export class RequestsView extends ItemView {
       this.renderView();
     }
   }
-}
 
-export type { RequestMethod };
+  /** Открывает справку по заполнению заявок. Если заметки нет в вольте — создаёт её. */
+  private async openHelp(): Promise<void> {
+    try {
+      const adapter = this.app.vault.adapter;
+      if (!(await adapter.exists(REQUESTS_HELP_PATH))) {
+        await adapter.write(REQUESTS_HELP_PATH, REQUESTS_HELP_MD);
+      }
+      const file = this.app.vault.getAbstractFileByPath(REQUESTS_HELP_PATH);
+      if (file instanceof TFile) {
+        await this.app.workspace.getLeaf(false).openFile(file);
+      } else {
+        new Notice('Не удалось найти файл справки');
+      }
+    } catch (e: unknown) {
+      new Notice(`Не удалось открыть справку: ${errorMessage(e)}`);
+    }
+  }
+}

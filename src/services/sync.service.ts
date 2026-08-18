@@ -44,6 +44,7 @@ export class RequestsSyncService {
     }
     const pulled = await this.pull(token);
     this.db.mergeRequestsFromServer(pulled.requests);
+    this.db.pruneSyncedNotInServer(new Set(pulled.requests.map(r => r.id)));
     this.db.replaceReferenceData(pulled);
     await this.db.save();
     return { pushed, pulled: pulled.requests.length };
@@ -54,6 +55,7 @@ export class RequestsSyncService {
     const token = await this.getToken();
     const pulled = await this.pull(token);
     this.db.mergeRequestsFromServer(pulled.requests);
+    this.db.pruneSyncedNotInServer(new Set(pulled.requests.map(r => r.id)));
     this.db.replaceReferenceData(pulled);
     await this.db.save();
     return pulled.requests.length;
@@ -69,6 +71,8 @@ export class RequestsSyncService {
     const payload = requests.map(r => ({
       id: r.sync_status === 'local' && r.number_seq === 0 ? 0 : r.id,
       client_id: r.id,
+      group_key: r.group_key || '',
+      parent_id: r.parent_id || 0,
       title: r.title,
       description: r.description,
       object_id: r.object_id,
@@ -80,7 +84,7 @@ export class RequestsSyncService {
       external_lab_id: r.external_lab_id,
       ekn: r.ekn,
       updated_at: r.updated_at,
-      method_ids: r.methods.map(m => m.method_id),
+      method_id: r.method_id,
     }));
     const res = await this.request({
       url: `${this.baseUrl}/api/lab/sync/push`,
@@ -211,6 +215,18 @@ export class RequestsSyncService {
       console.warn('Заявки: не JSON в ответе projects:', errorMessage(e));
       throw new Error('Сервер вернул не JSON при создании проекта');
     }
+  }
+
+  /** Обновляет проект/подпроект (владелец/admin). Пустые поля не меняются на сервере. */
+  async updateProject(id: number, data: { code?: string; name?: string; description?: string }): Promise<void> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/lab/projects/${id}`,
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    });
+    this.assertOk(res);
   }
 
   /** Создаёт группу (editor). Возвращает id. */
