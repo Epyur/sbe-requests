@@ -1,0 +1,9 @@
+{
+  "id": "sbe-requests",
+  "name": "Заявки на испытания",
+  "version": "0.1.0",
+  "minAppVersion": "1.11.4",
+  "description": "Заявки на испытания как SBE-плагин: локальная БД yourbase/sbe_requests/, синхронизация с lab-service через JWT из ЦУП, файлы в S3.",
+  "author": "Полищук Евгений (polishchuk@tn.ru)",
+  "isDesktopOnly": true
+}

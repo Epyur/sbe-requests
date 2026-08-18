@@ -1,0 +1,177 @@
+/* Классы вьюхи заявок (tn-req-*) на семантических токенах дизайн-системы SBE. */
+
+.tn-req-container {
+  padding: 12px;
+}
+
+.tn-req-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.tn-req-header h3 {
+  margin: 0;
+  margin-right: auto;
+  font-size: 18px;
+}
+
+.tn-req-input,
+.tn-req-textarea,
+.tn-req-select {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.tn-req-textarea {
+  min-height: 100px;
+  resize: vertical;
+}
+
+.tn-req-label {
+  display: block;
+  margin-top: 10px;
+  margin-bottom: 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.tn-req-flex {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tn-req-mb4 {
+  margin-bottom: 4px;
+}
+
+.tn-req-mb8 {
+  margin-bottom: 8px;
+}
+
+.tn-req-mb12 {
+  margin-bottom: 12px;
+}
+
+.tn-req-mt8 {
+  margin-top: 8px;
+}
+
+.tn-req-mt12 {
+  margin-top: 12px;
+}
+
+.tn-req-p24 {
+  padding: 24px;
+}
+
+.tn-req-meta {
+  color: var(--content-secondary-enabled);
+  font-size: var(--font-smaller);
+}
+
+.tn-req-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.tn-req-tree {
+  flex: 0 0 260px;
+  max-width: 260px;
+  border: 1px solid var(--border-divider-default);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.tn-req-tree-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+  font-size: var(--font-smaller);
+  color: var(--content-primary-a-enabled);
+  margin-bottom: 8px;
+}
+
+.tn-req-list {
+  flex: 1;
+  min-width: 0;
+}
+
+.tn-req-tree-item {
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: var(--font-smaller);
+  color: var(--content-primary-a-enabled);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tn-req-tree-item:hover {
+  background: var(--background-secondary-hover);
+}
+
+.tn-req-tree-selected {
+  background: var(--background-secondary-hover);
+  font-weight: 600;
+}
+
+.tn-req-row {
+  cursor: pointer;
+}
+
+.tn-req-row:hover {
+  background: var(--background-secondary-hover);
+}
+
+.tn-req-btn-sm {
+  padding: 0 6px;
+  font-size: var(--font-smaller);
+}
+
+.tn-req-status-select {
+  width: auto;
+}
+
+.tn-req-methods {
+  border: 1px solid var(--border-divider-default);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.tn-req-filter-label {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  white-space: nowrap;
+  margin-right: 12px;
+  color: var(--content-primary-a-enabled);
+}
+
+.tn-req-cb {
+  width: 16px;
+  height: 16px;
+  margin: 0 4px 0 0;
+  flex-shrink: 0;
+}
+
+.tn-req-group-card {
+  border: 1px solid var(--border-divider-default);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.tn-req-member-input {
+  width: 220px;
+}
+
+.tn-req-member-select {
+  width: auto;
+}
