@@ -1,6 +1,7 @@
 import { ItemView, Notice, WorkspaceLeaf } from 'obsidian';
 import type SbeRequestsPlugin from '../main';
 import type { LabProject, LabRequest, RequestMethod } from '../types/requests';
+import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 
 export const SBE_REQUESTS_VIEW_TYPE = 'sbe-requests-view';
@@ -131,7 +132,6 @@ export class RequestsView extends ItemView {
       const numCell = row.createEl('td');
       const firstMethod = r.methods && r.methods.length > 0 ? r.methods[0] : null;
       numCell.setText(firstMethod?.customer_number || '—');
-      numCell.createDiv({ cls: 'tn-req-meta' }).setText(r.title);
       row.createEl('td').setText(this.objectName(r.object_id));
       row.createEl('td').setText(STATUS_LABELS[r.status] || r.status);
       row.createEl('td').setText(this.formatDate(r.updated_at));
@@ -190,7 +190,8 @@ export class RequestsView extends ItemView {
   private filteredRequests(): LabRequest[] {
     let requests = this.plugin.requestsDb.getAll();
     const q = this.searchQuery.trim().toLowerCase();
-    if (q) requests = requests.filter(r => r.title.toLowerCase().includes(q));
+    if (q) requests = requests.filter(r =>
+      r.title.toLowerCase().includes(q) || this.objectName(r.object_id).toLowerCase().includes(q));
     if (this.selectedProjectId === 0) {
       requests = requests.filter(r => r.project_id <= 0);
     } else if (this.selectedProjectId !== null) {
@@ -231,13 +232,23 @@ export class RequestsView extends ItemView {
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
     backBtn.addEventListener('click', () => this.renderView());
 
-    container.createEl('h3', { text: req.title });
+    container.createEl('h3', { text: this.objectName(req.object_id) || req.title });
 
     const meta = container.createDiv({ cls: 'tn-req-meta tn-req-mb12' });
     meta.createDiv({ text: `№ ${req.number_seq}/${req.number_year}` });
     meta.createDiv({ text: `📁 Проект: ${this.projectName(req.project_id)}` });
     meta.createDiv({ text: `👥 Группа: ${this.groupName(req.group_id)}` });
     meta.createDiv({ text: `🔬 Объект: ${this.objectName(req.object_id)}` });
+    if (req.ekn) meta.createDiv({ text: `🔢 ЕКН: ${req.ekn}` });
+    const obj = this.plugin.requestsDb.getObjects().find(o => o.id === req.object_id);
+    const chars = obj?.characteristics;
+    if (chars) {
+      if (chars.batch_number !== undefined) meta.createDiv({ text: `📦 Номер партии: ${chars.batch_number}` });
+      if (chars.sample_id) meta.createDiv({ text: `🏷 Идентификатор образца: ${chars.sample_id}` });
+    }
+    meta.createDiv({ text: `⚡ Приоритет: ${this.priorityLabel(req.priority)}` });
+    if (req.test_purpose) meta.createDiv({ text: `🎯 Цель испытания: ${this.purposeLabel(req.test_purpose)}` });
+    if (req.external_lab_id > 0) meta.createDiv({ text: `🏭 Внешняя лаборатория: ${this.labName(req.external_lab_id)}` });
     meta.createDiv({ text: `👤 Владелец: ${req.owner_email || '—'}` });
     meta.createDiv({ text: `📅 Создана: ${this.formatDate(req.created_at)}` });
     meta.createDiv({ text: `📅 Обновлена: ${this.formatDate(req.updated_at)}` });
@@ -263,6 +274,12 @@ export class RequestsView extends ItemView {
         row.createEl('td').setText(this.methodName(m.method_id));
         row.createEl('td').setText(m.customer_number || '—');
         row.createEl('td').setText(m.lab_number || '—');
+      }
+
+      const indicators = this.indicatorsForMethods(req.methods.map(m => m.method_id));
+      if (indicators.length > 0) {
+        const indDiv = methodsDiv.createDiv({ cls: 'tn-req-meta tn-req-mt8' });
+        indDiv.setText(`Определяемые показатели: ${indicators.join(', ')}`);
       }
     }
 
@@ -328,6 +345,49 @@ export class RequestsView extends ItemView {
     return m ? `${m.code}${m.name ? ' — ' + m.name : ''}` : `#${methodId}`;
   }
 
+  private priorityLabel(priority: string): string {
+    switch (priority) {
+      case 'critical': return 'Критичный';
+      case 'blocker': return 'Блокер (остановить исполнение других заявок)';
+      case 'normal': return 'Средний';
+      default: return priority || 'Средний';
+    }
+  }
+
+  private purposeLabel(purpose: string): string {
+    switch (purpose) {
+      case 'quality_control': return 'Текущий контроль';
+      case 'rnd': return 'НИОКР';
+      case 'certification': return 'Сертификация';
+      case 'declaration': return 'Декларирование';
+      default: return purpose || '—';
+    }
+  }
+
+  private labName(labId: number): string {
+    const l = this.plugin.requestsDb.getLabs().find(lb => lb.id === labId);
+    return l ? `${l.code}${l.name ? ' — ' + l.name : ''}` : `#${labId}`;
+  }
+
+  /** Объединение определяемых показателей выбранных методов (уникальные). */
+  private indicatorsForMethods(methodIds: number[]): string[] {
+    const methods = this.plugin.requestsDb.getMethods();
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const id of methodIds) {
+      const m = methods.find(md => md.id === id);
+      if (m && Array.isArray(m.determinable_indicators)) {
+        for (const ind of m.determinable_indicators) {
+          if (ind && !seen.has(ind)) {
+            seen.add(ind);
+            out.push(ind);
+          }
+        }
+      }
+    }
+    return out;
+  }
+
   // ---- Форма создания/редактирования заявки ----
 
   private showCreateForm(): void {
@@ -345,15 +405,154 @@ export class RequestsView extends ItemView {
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
     backBtn.addEventListener('click', () => existing ? this.renderRequestDetail(existing) : this.renderView());
 
-    container.createEl('h3', { text: existing ? `✏️ Редактировать: ${existing.title}` : '✉️ Новая заявка' });
-
-    const titleLabel = container.createEl('label', { text: 'Наименование заявки', cls: 'tn-req-label' });
-    const titleInput = container.createEl('input', { attr: { type: 'text', placeholder: 'Например: Испытание мембраны ПВХ' }, cls: 'tn-req-input' });
-    if (existing) titleInput.value = existing.title;
+    container.createEl('h3', { text: existing ? `✏️ Редактировать: ${this.objectName(existing.object_id) || existing.title}` : '✉️ Новая заявка' });
 
     const descLabel = container.createEl('label', { text: 'Описание', cls: 'tn-req-label' });
     const descInput = container.createEl('textarea', { cls: 'tn-req-textarea' });
     if (existing) descInput.value = existing.description;
+
+    // Приоритет
+    const priorityLabel = container.createEl('label', { text: 'Приоритет', cls: 'tn-req-label' });
+    const prioritySelect = container.createEl('select', { cls: 'tn-req-select' });
+    prioritySelect.createEl('option', { value: 'normal', text: 'Средний' });
+    prioritySelect.createEl('option', { value: 'critical', text: 'Критичный' });
+    prioritySelect.createEl('option', { value: 'blocker', text: 'Блокер (остановить исполнение других заявок)' });
+    prioritySelect.value = existing ? existing.priority : 'normal';
+
+    // Цель испытания
+    const purposeLabel = container.createEl('label', { text: 'Цель испытания', cls: 'tn-req-label' });
+    const purposeSelect = container.createEl('select', { cls: 'tn-req-select' });
+    purposeSelect.createEl('option', { value: 'quality_control', text: 'Текущий контроль' });
+    purposeSelect.createEl('option', { value: 'rnd', text: 'НИОКР' });
+    purposeSelect.createEl('option', { value: 'certification', text: 'Сертификация' });
+    purposeSelect.createEl('option', { value: 'declaration', text: 'Декларирование' });
+    purposeSelect.value = existing && existing.test_purpose ? existing.test_purpose : 'quality_control';
+
+    // Внешняя лаборатория
+    const externalLabLabel = container.createEl('label', { cls: 'tn-req-filter-label tn-req-mb4' });
+    const externalLabCb = externalLabLabel.createEl('input', { attr: { type: 'checkbox' }, cls: 'tn-req-cb' });
+    externalLabLabel.createEl('span').setText(' Провести испытания во внешней лаборатории');
+    const externalLabs = this.plugin.requestsDb.getLabs().filter(l => l.type === 'external');
+    const externalLabSelect = container.createEl('select', { cls: 'tn-req-select tn-req-mb8' });
+    externalLabSelect.createEl('option', { value: '0', text: '— Выберите внешнюю лабораторию —' });
+    for (const l of externalLabs) {
+      externalLabSelect.createEl('option', { value: String(l.id), text: `${l.code}${l.name ? ' — ' + l.name : ''}` });
+    }
+    externalLabSelect.hide();
+    const existingExternal = existing ? existing.external_lab_id : 0;
+    if (existingExternal > 0) {
+      externalLabCb.checked = true;
+      externalLabSelect.show();
+      externalLabSelect.value = String(existingExternal);
+    }
+    externalLabCb.addEventListener('change', () => {
+      if (externalLabCb.checked) externalLabSelect.show();
+      else {
+        externalLabSelect.hide();
+        externalLabSelect.value = '0';
+      }
+    });
+
+    // Объект исследования: ЕКН или экспериментальный образец
+    const objectSection = container.createDiv({ cls: 'tn-req-object-section' });
+    objectSection.createEl('h4', { text: '🔬 Объект исследования' });
+
+    const eknLabel = objectSection.createEl('label', { text: 'ЕКН (серийная продукция)', cls: 'tn-req-label' });
+    const eknInput = objectSection.createEl('input', { attr: { type: 'text', placeholder: 'Номер ЕКН (например, 068863). Оставьте пустым для экспериментального образца.' }, cls: 'tn-req-input' });
+    const eknHints = objectSection.createDiv({ cls: 'tn-req-ekn-hints' });
+    const eknSnapshot = objectSection.createDiv({ cls: 'tn-req-ekn-snapshot tn-req-meta tn-req-mb8' });
+
+    const batchLabel = objectSection.createEl('label', { text: 'Номер партии (обязателен при ЕКН)', cls: 'tn-req-label' });
+    const batchInput = objectSection.createEl('input', { attr: { type: 'number', min: '0', step: '1' }, cls: 'tn-req-input tn-req-mb8' });
+
+    // Если по ЕКН нет данных в ПИМ — заказчик заполняет название и целевые характеристики сам
+    const eknManualLabel = objectSection.createEl('label', { text: 'Данные по ЕКН не найдены в справочнике. Укажите название и целевые характеристики материала:', cls: 'tn-req-label tn-req-mb4' });
+    const eknManualDiv = objectSection.createDiv();
+    const eknNameLabel = eknManualDiv.createEl('label', { text: 'Название материала', cls: 'tn-req-label' });
+    const eknNameInput = eknManualDiv.createEl('input', { attr: { type: 'text' }, cls: 'tn-req-input' });
+    const eknTargetLabel = eknManualDiv.createEl('label', { text: 'Целевые характеристики', cls: 'tn-req-label' });
+    const eknTargetInput = eknManualDiv.createEl('textarea', { cls: 'tn-req-textarea tn-req-mb8' });
+
+    const expLabel = objectSection.createEl('label', { text: 'Экспериментальный образец (без ЕКН)', cls: 'tn-req-label tn-req-mb4' });
+    const expDiv = objectSection.createDiv();
+    const expNameLabel = expDiv.createEl('label', { text: 'Название материала', cls: 'tn-req-label' });
+    const expNameInput = expDiv.createEl('input', { attr: { type: 'text' }, cls: 'tn-req-input' });
+    const expTypeLabel = expDiv.createEl('label', { text: 'Тип объекта', cls: 'tn-req-label' });
+    const expTypeSelect = expDiv.createEl('select', { cls: 'tn-req-select' });
+    expTypeSelect.createEl('option', { value: 'series', text: 'Серийный выпуск' });
+    expTypeSelect.createEl('option', { value: 'experimental', text: 'Экспериментальный продукт' });
+    const expThickLabel = expDiv.createEl('label', { text: 'Толщина образца, мм', cls: 'tn-req-label' });
+    const expThickInput = expDiv.createEl('input', { attr: { type: 'text' }, cls: 'tn-req-input' });
+    const expIdLabel = expDiv.createEl('label', { text: 'Идентификатор образца', cls: 'tn-req-label' });
+    const expIdInput = expDiv.createEl('input', { attr: { type: 'text' }, cls: 'tn-req-input' });
+    const expTargetLabel = expDiv.createEl('label', { text: 'Целевой показатель', cls: 'tn-req-label' });
+    const expTargetInput = expDiv.createEl('textarea', { cls: 'tn-req-textarea' });
+
+    // Объект из существующей заявки
+    const existingObj = existing ? this.plugin.requestsDb.getObjects().find(o => o.id === existing.object_id) : null;
+    const existingChars = existingObj?.characteristics || {};
+
+    // Наполнение из существующей заявки
+    const existingIsEkn = !!existingChars.ekn || !!existing?.ekn;
+    if (existingIsEkn) {
+      eknInput.value = existing?.ekn || existingChars.ekn || '';
+      if (existingChars.batch_number !== undefined) batchInput.value = String(existingChars.batch_number);
+      expDiv.hide();
+      const snap = existingChars.ekn_snapshot;
+      if (snap && snap.name) {
+        eknSnapshot.setText(`📄 ${snap.name}${snap.thickness ? ' · ' + snap.thickness : ''}${snap.sto_number ? ' · ' + snap.sto_number : ''}`);
+        eknManualLabel.hide();
+        eknManualDiv.hide();
+      } else {
+        eknSnapshot.setText('Данные по ЕКН не загружены из справочника');
+        if (existingObj) eknNameInput.value = existingObj.name;
+        if (existingChars.target_indicator) eknTargetInput.value = existingChars.target_indicator;
+        eknManualLabel.show();
+        eknManualDiv.show();
+      }
+    } else {
+      if (existingObj) expNameInput.value = existingObj.name;
+      expTypeSelect.value = existingChars.sample_type || 'experimental';
+      if (existingChars.thickness_mm) expThickInput.value = existingChars.thickness_mm;
+      if (existingChars.sample_id) expIdInput.value = existingChars.sample_id;
+      if (existingChars.target_indicator) expTargetInput.value = existingChars.target_indicator;
+      batchLabel.hide();
+      batchInput.hide();
+      eknManualLabel.hide();
+      eknManualDiv.hide();
+    }
+
+    // Поиск ЕКН через sbe-ekn (подсказки)
+    let eknTimer: number | null = null;
+    eknInput.addEventListener('input', () => {
+      const q = eknInput.value.trim();
+      eknHints.empty();
+      eknSnapshot.setText('');
+      if (q) {
+        expDiv.hide();
+        batchLabel.show();
+        batchInput.show();
+      } else {
+        expDiv.show();
+        batchLabel.hide();
+        batchInput.hide();
+      }
+      if (eknTimer) window.clearTimeout(eknTimer);
+      eknTimer = window.setTimeout(() => {
+        if (!q) return;
+        void this.searchEkn(q, eknHints, (product) => {
+          eknInput.value = product.ekn;
+          eknHints.empty();
+          eknSnapshot.setText(`📄 ${product.name}${product.thickness ? ' · ' + product.thickness : ''}${product.sto_number ? ' · ' + product.sto_number : ''}`);
+          expDiv.hide();
+          batchLabel.show();
+          batchInput.show();
+          eknManualLabel.hide();
+          eknManualDiv.hide();
+          new Notice(`ЕКН ${product.ekn}: данные материала загружены из справочника`);
+        });
+      }, 400);
+    });
 
     // Проект
     const projectLabel = container.createEl('label', { text: 'Проект', cls: 'tn-req-label' });
@@ -374,16 +573,6 @@ export class RequestsView extends ItemView {
       groupSelect.createEl('option', { value: String(g.id), text: g.name });
     }
     if (existing) groupSelect.value = String(existing.group_id);
-
-    // Объект
-    const objectLabel = container.createEl('label', { text: 'Объект исследования', cls: 'tn-req-label' });
-    const objectSelect = container.createEl('select', { cls: 'tn-req-select' });
-    const objects = this.plugin.requestsDb.getObjects();
-    objectSelect.createEl('option', { value: '0', text: '— Выберите объект —' });
-    for (const o of objects) {
-      objectSelect.createEl('option', { value: String(o.id), text: o.name });
-    }
-    if (existing) objectSelect.value = String(existing.object_id);
 
     // Методы (чекбоксы, сгруппированы по лабораториям)
     const methodsLabel = container.createEl('label', { text: 'Методы испытаний', cls: 'tn-req-label' });
@@ -407,9 +596,15 @@ export class RequestsView extends ItemView {
         const wrapper = methodsDiv.createEl('label', { cls: 'tn-req-filter-label' });
         const cb = wrapper.createEl('input', { attr: { type: 'checkbox', value: String(m.id) }, cls: 'tn-req-cb' });
         cb.checked = selected.has(m.id);
+        cb.addEventListener('change', () => this.updateIndicators(methodsDiv, indicatorsDiv));
         wrapper.createEl('span').setText(` ${m.code} — ${m.name}`);
       }
     }
+
+    // Определяемые показатели (из выбранных методов)
+    const indicatorsLabel = container.createEl('label', { text: 'Определяемые показатели', cls: 'tn-req-label' });
+    const indicatorsDiv = container.createDiv({ cls: 'tn-req-methods tn-req-mb12' });
+    this.updateIndicators(methodsDiv, indicatorsDiv);
 
     const btnRow = container.createDiv({ cls: 'tn-req-header tn-req-mt12' });
     const saveBtn = btnRow.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });
@@ -417,13 +612,65 @@ export class RequestsView extends ItemView {
     cancelBtn.addEventListener('click', () => existing ? this.renderRequestDetail(existing) : this.renderView());
 
     saveBtn.addEventListener('click', async () => {
-      const title = titleInput.value.trim();
-      if (!title) { new Notice('Введите наименование заявки'); return; }
-      const objectId = Number(objectSelect.value);
-      if (objectId <= 0) { new Notice('Выберите объект исследования'); return; }
+      const ekn = eknInput.value.trim();
+      const isEknMode = !!ekn;
+
+      // Собираем характеристики объекта исследования
+      let objectId = 0;
+      let objectName = '';
+      if (isEknMode) {
+        const batchStr = batchInput.value.trim();
+        if (!batchStr || !/^\d+$/.test(batchStr)) {
+          new Notice('Введите номер партии (целое число) — обязателен при ЕКН');
+          return;
+        }
+        const snapshot = await this.plugin.syncService.getEknProduct(ekn);
+        const manualName = eknNameInput.value.trim();
+        if (!snapshot) {
+          if (!manualName) {
+            new Notice('Данные по ЕКН не найдены в справочнике. Укажите название материала и целевые характеристики.');
+            return;
+          }
+          objectName = manualName;
+          if (!eknTargetInput.value.trim()) {
+            new Notice('Укажите целевые характеристики материала');
+            return;
+          }
+        } else {
+          objectName = snapshot.name || `ЕКН ${ekn}`;
+        }
+        const characteristics: Record<string, unknown> = {
+          ekn,
+          batch_number: Number(batchStr),
+          sample_type: 'series',
+        };
+        if (snapshot) characteristics.ekn_snapshot = snapshot;
+        if (manualName) characteristics.name_manual = manualName;
+        if (eknTargetInput.value.trim()) characteristics.target_indicator = eknTargetInput.value.trim();
+        objectId = await this.plugin.syncService.createObject(objectName, '', characteristics);
+      } else {
+        const expName = expNameInput.value.trim();
+        if (!expName) { new Notice('Введите название материала (или укажите ЕКН)'); return; }
+        const sampleId = expIdInput.value.trim();
+        if (!sampleId) { new Notice('Введите идентификатор образца'); return; }
+        objectName = expName;
+        const characteristics: Record<string, unknown> = {
+          sample_id: sampleId,
+          sample_type: expTypeSelect.value,
+        };
+        if (expThickInput.value.trim()) characteristics.thickness_mm = expThickInput.value.trim();
+        if (expTargetInput.value.trim()) characteristics.target_indicator = expTargetInput.value.trim();
+        objectId = await this.plugin.syncService.createObject(objectName, '', characteristics);
+      }
+      if (objectId <= 0) { new Notice('Не удалось создать объект исследования'); return; }
+
       const methodIds = Array.from(methodsDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
         .map(cb => Number(cb.value)).filter(v => v > 0);
       if (methodIds.length === 0) { new Notice('Выберите хотя бы один метод'); return; }
+
+      const priority = prioritySelect.value || 'normal';
+      const testPurpose = purposeSelect.value || '';
+      const externalLabId = externalLabCb.checked ? Number(externalLabSelect.value) || 0 : 0;
 
       saveBtn.setText('⏳');
       saveBtn.setAttr('disabled', 'true');
@@ -432,11 +679,15 @@ export class RequestsView extends ItemView {
       try {
         const now = new Date().toISOString();
         if (existing) {
-          existing.title = title;
+          existing.title = objectName;
           existing.description = descInput.value.trim();
           existing.object_id = objectId;
           existing.project_id = Number(projectSelect.value);
           existing.group_id = Number(groupSelect.value);
+          existing.priority = priority;
+          existing.test_purpose = testPurpose;
+          existing.external_lab_id = externalLabId;
+          existing.ekn = isEknMode ? ekn : '';
           existing.methods = methodIds.map(mid => {
             const prev = existing.methods.find(m => m.method_id === mid);
             return prev ? { ...prev } : { method_id: mid, customer_number: '', lab_number: '' };
@@ -452,13 +703,17 @@ export class RequestsView extends ItemView {
             id: Date.now() + Math.floor(Math.random() * 1000),
             number_seq: 0,
             number_year: 0,
-            title,
+            title: objectName,
             description: descInput.value.trim(),
             object_id: objectId,
             project_id: Number(projectSelect.value),
             group_id: Number(groupSelect.value),
             owner_email: this.myEmail,
             status: 'new',
+            priority,
+            test_purpose: testPurpose,
+            external_lab_id: externalLabId,
+            ekn: isEknMode ? ekn : '',
             methods: methodIds.map(mid => ({ method_id: mid, customer_number: '', lab_number: '' })),
             files: [],
             created_at: now,
@@ -477,6 +732,47 @@ export class RequestsView extends ItemView {
         cancelBtn.removeAttribute('disabled');
       }
     });
+  }
+
+  /** Поиск ЕКН через sbe-ekn: подсказки, выбор карточки. */
+  private async searchEkn(
+    query: string,
+    hintsEl: HTMLElement,
+    onPick: (product: { ekn: string; name: string; thickness: string; sto_number: string; sto_name: string }) => void,
+  ): Promise<void> {
+    try {
+      const eknService = await getService('sbe-ekn');
+      const results = await eknService.search(query);
+      hintsEl.empty();
+      for (const r of results.slice(0, 8)) {
+        const item = hintsEl.createDiv({ cls: 'tn-req-ekn-hint' });
+        item.createDiv({ cls: 'tn-req-ekn-hint-code' }).setText(r.ekn);
+        item.createDiv({ cls: 'tn-req-meta' }).setText(r.name || '—');
+        item.addEventListener('click', () => {
+          onPick({ ekn: r.ekn, name: r.name, thickness: r.thickness, sto_number: r.sto_number, sto_name: r.sto_name });
+        });
+      }
+    } catch (e: unknown) {
+      console.warn('Заявки: не удалось найти ЕКН в sbe-ekn:', errorMessage(e));
+    }
+  }
+
+  /** Перерисовывает чекбоксы определяемых показателей по выбранным методам. */
+  private updateIndicators(methodsDiv: HTMLElement, indicatorsDiv: HTMLElement): void {
+    const checked = Array.from(methodsDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
+      .map(cb => Number(cb.value));
+    const indicators = this.indicatorsForMethods(checked);
+    indicatorsDiv.empty();
+    if (indicators.length === 0) {
+      indicatorsDiv.createDiv({ cls: 'tn-req-meta' }).setText('Показатели появятся после выбора методов');
+      return;
+    }
+    for (const ind of indicators) {
+      const wrapper = indicatorsDiv.createEl('label', { cls: 'tn-req-filter-label' });
+      const cb = wrapper.createEl('input', { attr: { type: 'checkbox', value: ind }, cls: 'tn-req-cb' });
+      cb.checked = true;
+      wrapper.createEl('span').setText(` ${ind}`);
+    }
   }
 
   // ---- Форма создания проекта ----

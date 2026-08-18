@@ -96,6 +96,42 @@ SBE-плагин «Заявки на испытания»: локальная Б
   осталась `synced` — не перепушится сама; её надо отредактировать/сохранить (станет `local`)
   или удалить. Новая версия main.js подхватится после перезапуска Obsidian / hot-reload.
 
+### 2026-08-18 — v0.1.1 (адаптация формы заявки под практику, Этап 1-3 плана 2026-08-18-sbe-requests-form-adaptation-plan)
+- **Сервер (lab-service, задеплоен + E2E)**:
+  - миграции: `labs.type` (internal/external), `methods.determinable_indicators` (JSONB),
+    `requests.priority`/`test_purpose`/`external_lab_id`/`ekn`;
+  - `requests.go`: новые поля в create/update/load/pull/push; **автопроект-ЕКН** —
+    при `ekn` без проекта создаётся/переиспользуется проект с `code=ekn` (is_ekn=true);
+  - `references.go`: `Lab.type`, `Method.determinable_indicators` (list/create);
+  - фикс: после создания автопроекта в tx `loadProjectInfo` через пул не видел
+    незакоммиченный проект → задаётся `pi.code = ekn` напрямую.
+  - E2E: внешняя лаба FAER, метод GG-M3 с показателями, объект с ЕКН (batch_number,
+    ekn_snapshot), автопроект 068863 + переиспользование, экспериментальный образец,
+    pull с новыми полями — всё зелёное.
+- **Плагин**:
+  - `types/requests.ts`: `Lab.type`, `LabMethod.determinable_indicators`,
+    `ObjectCharacteristics` (ekn/batch_number/sample_id/sample_type/thickness_mm/
+    target_indicator/ekn_snapshot), `LabRequest.priority/test_purpose/external_lab_id/ekn`;
+  - `sync.service.ts`: push с новыми полями, `getEknProduct(ekn)` (sbe-ekn, fallback null);
+  - `requests-view.ts`: форма — ЕКН-блок (подсказки из `getService('sbe-ekn').search()`,
+    снимок, номер партии) / блок «Экспериментальный образец» (название/тип/толщина/
+    идентификатор/целевой показатель), приоритет, цель испытания, чекбокс «внешняя
+    лаборатория» → select внешних, определяемые показатели из выбранных методов;
+    карточка — новые поля;
+  - `styles.css`: `tn-req-ekn-*`, `tn-req-object-section`.
+  - tsc EXIT=0, build OK (main.js 61KB).
+- **Интеграция sbe-ekn**: подсказки по ЕКН и снимок через `getService('sbe-ekn')`;
+  при недоступности sbe-ekn заявка создаётся (ЕКН вручную, снимок пуст).
+- **Доработки по требованию пользователя (v0.1.1)**:
+  - поле **«Наименование заявки» удалено** — названием заявки становится наименование
+    объекта исследования (в таблице/карточке/форме показывается объект, не title);
+    если по ЕКН нет данных в PIM — предлагается заполнить название и целевые
+    характеристики вручную (обязательно);
+  - **поле «Номер партии»** появляется при вводе/выборе ЕКН (скрывается при очистке);
+  - **«Цель испытания»**: добавлен пункт «Текущий контроль» (`quality_control`),
+    сделан по умолчанию (для новых заявок).
+  - tsc EXIT=0, build OK (main.js 63KB). Версия manifest/package: **0.1.1**.
+
 ## Статистика ошибок и отступлений
 
 - Нарушений правил нет: 0 `any`, 0 `fetch`, 0 инлайн-стилей, `window.setTimeout` корректен,

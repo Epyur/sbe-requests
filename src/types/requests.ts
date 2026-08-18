@@ -1,11 +1,12 @@
 /** Типы модуля «Заявки на испытания» SBE. Модель совместима с lab-service (server_back/lab-service). */
 
-/** Лаборатория (справочник). */
+/** Лаборатория (справочник). type: internal | external. */
 export interface Lab {
   id: number;
   code: string;
   name: string;
   description: string;
+  type: string;
   created_at: string;
   updated_at: string;
 }
@@ -17,8 +18,32 @@ export interface LabMethod {
   name: string;
   lab_id: number;
   description: string;
+  determinable_indicators: string[];
   created_at: string;
   updated_at: string;
+}
+
+/** Характеристики объекта исследования (objects.characteristics JSONB). */
+export interface ObjectCharacteristics {
+  /** Номер ЕКН (серийная продукция). */
+  ekn?: string;
+  /** Номер партии (обязателен при ЕКН, целое число). */
+  batch_number?: number;
+  /** Идентификатор образца (без ЕКН, число/текст). */
+  sample_id?: string;
+  /** Тип образца: series | experimental. */
+  sample_type?: string;
+  /** Толщина образца, мм (без ЕКН). */
+  thickness_mm?: string;
+  /** Целевой показатель (без ЕКН). */
+  target_indicator?: string;
+  /** Снимок данных из sbe-ekn: {name, thickness, sto_number, sto_name}. */
+  ekn_snapshot?: {
+    name: string;
+    thickness: string;
+    sto_number: string;
+    sto_name: string;
+  };
 }
 
 /** Объект исследования (характеристики — JSONB). */
@@ -26,7 +51,7 @@ export interface LabObject {
   id: number;
   name: string;
   description: string;
-  characteristics: Record<string, unknown>;
+  characteristics: ObjectCharacteristics;
   created_at: string;
   updated_at: string;
 }
@@ -87,6 +112,14 @@ export interface LabRequest {
   group_id: number;
   owner_email: string;
   status: string;
+  /** Приоритет: normal | critical | blocker. */
+  priority: string;
+  /** Цель испытания: rnd | certification | declaration. */
+  test_purpose: string;
+  /** Внешняя лаборатория (0 = внутренняя; >0 = labs.id с type=external). */
+  external_lab_id: number;
+  /** Номер ЕКН (для автопроекта, если проект не выбран). */
+  ekn: string;
   methods: RequestMethod[];
   files: RequestFile[];
   created_at: string;

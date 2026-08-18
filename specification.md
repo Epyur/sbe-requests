@@ -16,9 +16,9 @@ SBE-плагин «Заявки на испытания». Клиент lab-serv
 | POST | `/projects` | editor | `{parent_id,code,name,description,is_ekn}` → `{id}`; 409 code exists |
 | PATCH | `/projects/{id}` | editor+/владелец | `{parent_id,code,name,description,is_ekn}` → `{ok}` |
 | GET | `/requests` | viewer | `{"requests":[...]}` (только видимые) |
-| POST | `/requests` | editor | `{title,description,object_id,project_id,group_id,method_ids}` → `{request}` |
+| POST | `/requests` | editor | `{title,description,object_id,project_id,group_id,priority,test_purpose,external_lab_id,ekn,method_ids}` → `{request}`; при `ekn` без проекта — автопроект (code=ekn) |
 | GET | `/requests/{id}` | viewer (видимость) | `{"request":{...}}`; 403 если не видно |
-| PATCH | `/requests/{id}` | editor+/владелец | `{title,description,object_id,project_id,group_id,method_ids}` → `{request}` |
+| PATCH | `/requests/{id}` | editor+/владелец | `{title,description,object_id,project_id,group_id,priority,test_purpose,external_lab_id,ekn,method_ids}` → `{request}` |
 | POST | `/requests/{id}/status` | editor | `{status}` (new/processing/completed) → `{ok}` |
 | GET | `/groups` | viewer | `{"groups":[...]}` (мои + где участник) |
 | POST | `/groups` | editor | `{name}` → `{id}` |
@@ -35,23 +35,48 @@ SBE-плагин «Заявки на испытания». Клиент lab-serv
 ## Модели (JSON, соответствуют Go-структурам lab-service)
 
 ```ts
-Lab      { id, code, name, description, created_at, updated_at }
-LabMethod{ id, code, name, lab_id, description, created_at, updated_at }
-LabObject{ id, name, description, characteristics: Record<string,unknown>, created_at, updated_at }
+Lab      { id, code, name, description, type: 'internal'|'external', created_at, updated_at }
+LabMethod{ id, code, name, lab_id, description, determinable_indicators: string[], created_at, updated_at }
+ObjectCharacteristics {
+  ekn?: string;                    // номер ЕКН (серийная)
+  batch_number?: number;           // номер партии (обязателен при ЕКН, целое)
+  sample_id?: string;              // идентификатор образца (без ЕКН)
+  sample_type?: 'series'|'experimental';
+  thickness_mm?: string;
+  target_indicator?: string;
+  ekn_snapshot?: { name, thickness, sto_number, sto_name };   // снимок sbe-ekn
+}
+LabObject{ id, name, description, characteristics: ObjectCharacteristics, created_at, updated_at }
 LabProject{ id, parent_id, code, name, description, is_ekn, owner_email, created_at, updated_at }
 GroupMember{ email, role }
 LabGroup  { id, name, owner_email, members: GroupMember[], created_at, updated_at }
 RequestMethod{ method_id, customer_number, lab_number }
 RequestFile{ file_key, file_name, file_size, file_url }
 LabRequest{ id, number_seq, number_year, title, description, object_id, project_id, group_id,
-            owner_email, status, methods: RequestMethod[], files: RequestFile[],
+            owner_email, status, priority: 'normal'|'critical'|'blocker',
+            test_purpose: ''|'quality_control'|'rnd'|'certification'|'declaration',
+            external_lab_id: number, ekn: string,
+            methods: RequestMethod[], files: RequestFile[],
             created_at, updated_at, sync_status }
 ```
 
+Примечания:
+- `title` = наименование объекта исследования (поле «Наименование заявки» в форме НЕ вводится);
+  если по ЕКН нет данных в PIM — заказчик заполняет название и целевые характеристики вручную
+  (обязательно), и они становятся названием заявки.
+- `test_purpose`: по умолчанию `quality_control` («Текущий контроль») для новых заявок.
+
 PushRequest (тело `POST /sync/push`, заявки): `{id, client_id, title, description, object_id,
-project_id, group_id, status, updated_at, method_ids}`. `id=0` — новая заявка (сервер присваивает
-NNN и номера, отвечает в `created` с `client_id` и полной заявкой — клиент заменяет локальную
-запись через `replaceLocalRequest`).
+project_id, group_id, status, priority, test_purpose, external_lab_id, ekn, updated_at,
+method_ids}`. `id=0` — новая заявка (сервер присваивает NNN и номера, отвечает в `created`
+с `client_id` и полной заявкой — клиент заменяет локальную запись через `replaceLocalRequest`).
+
+## Автопроект-ЕКН (сервер)
+
+ЕКН и проект — независимые сущности. Если при создании/обновлении заявки `ekn` задан,
+а `project_id = 0` — сервер создаёт проект с `code = ekn` (is_ekn=true) или переиспользует
+существующий с таким кодом; заявка привязывается к нему. При явно выбранном проекте
+автопроект не создаётся.
 
 ## Нумерация (сервер, аддендум спеки §9)
 
@@ -92,6 +117,17 @@ NNN и номера, отвечает в `created` с `client_id` и полно�
 - Вьюха «Заявки на испытания» (тип `sbe-requests-view`): дерево проектов (с фильтром
   «Без проекта») + таблица заявок (колонки: **Номер заявки** = customer_number первого метода,
   Объект, Статус, Обновлено; название заявки — подпись под номером), карточка заявки
-  (методы с номерами, файлы, смена статуса, правка), группы (создание, участники),
-  справочники (labs/methods — только чтение, objects — создание editor).
+  (методы с номерами, определяемые показатели, файлы, смена статуса, правка), группы
+  (создание, участники), справочники (labs/methods — только чтение, objects — создание editor).
+- **Форма заявки** (адаптация под практику, 2026-08-18):
+  - **Объект исследования**: поле «ЕКН» (подсказки из `getService('sbe-ekn').search()`);
+    при выборе ЕКН — снимок (название/толщина/СТО) + обязательный «Номер партии» (целое).
+    Если ЕКН пуст — блок «Экспериментальный образец»: название материала (обяз.), тип объекта
+    (Серийный/Экспериментальный), толщина мм, идентификатор образца (обяз.), целевой показатель.
+  - **Приоритет** (Средний/Критичный/Блокер), **Цель испытания** (Текущий контроль —
+    по умолчанию / НИОКР / Сертификация / Декларирование).
+  - **Внешняя лаборатория**: чекбокс «Провести испытания во внешней лаборатории» → select
+    внешних лабораторий (`labs.type='external'`).
+  - **Методы** (группы по лабораториям) + **Определяемые показатели** — чекбоксы из
+    `method.determinable_indicators` выбранных методов.
 - Настройки: `apiUrl` + раздел «Права доступа» (роли + общий доступ, admin).

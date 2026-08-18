@@ -615,3 +615,51 @@
 .tn-req-member-select {
   width: auto;
 }
+
+.tn-req-object-section {
+  border: 1px solid var(--border-divider-default);
+  border-radius: 8px;
+  padding: 12px;
+  margin: 8px 0;
+}
+
+.tn-req-object-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+}
+
+.tn-req-ekn-hints {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+
+.tn-req-ekn-hint {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.tn-req-ekn-hint:hover {
+  background: var(--background-accent-subtlest);
+}
+
+.tn-req-ekn-hint-code {
+  font-weight: 600;
+  font-family: var(--font-monospace);
+  white-space: nowrap;
+}
+
+.tn-req-ekn-snapshot {
+  color: var(--content-secondary-enabled);
+  margin-top: 4px;
+}
+
+.tn-req-mt8 {
+  margin-top: 8px;
+}

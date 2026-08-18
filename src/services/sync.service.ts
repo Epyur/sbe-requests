@@ -75,6 +75,10 @@ export class RequestsSyncService {
       project_id: r.project_id,
       group_id: r.group_id,
       status: r.status,
+      priority: r.priority,
+      test_purpose: r.test_purpose,
+      external_lab_id: r.external_lab_id,
+      ekn: r.ekn,
       updated_at: r.updated_at,
       method_ids: r.methods.map(m => m.method_id),
     }));
@@ -171,6 +175,23 @@ export class RequestsSyncService {
   /** Создаёт объект исследования (editor). Возвращает id. */
   async createObject(name: string, description: string, characteristics: Record<string, unknown>): Promise<number> {
     return this.createReference('/api/lab/objects', { name, description, characteristics });
+  }
+
+  /** Получает данные продукта по ЕКН из sbe-ekn. При недоступности — null (не блокирует заявку). */
+  async getEknProduct(ekn: string): Promise<import('../types/requests').ObjectCharacteristics['ekn_snapshot'] | null> {
+    try {
+      const eknService = await getService('sbe-ekn');
+      const product = await eknService.getProduct(ekn);
+      return {
+        name: product.name,
+        thickness: product.thickness,
+        sto_number: product.sto_number,
+        sto_name: product.sto_name,
+      };
+    } catch (e: unknown) {
+      console.warn('Заявки: не удалось получить данные ЕКН из sbe-ekn:', errorMessage(e));
+      return null;
+    }
   }
 
   /** Создаёт проект/подпроект (editor). Возвращает id. */
