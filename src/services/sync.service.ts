@@ -199,7 +199,7 @@ export class RequestsSyncService {
   }
 
   /** Создаёт проект/подпроект (editor). Возвращает id. */
-  async createProject(data: { parent_id: number; code: string; name: string; description: string; is_ekn: boolean }): Promise<number> {
+  async createProject(data: { parent_id: number; code: string; name: string; description: string; is_ekn: boolean; group_id: number }): Promise<number> {
     const token = await this.getToken();
     const res = await this.request({
       url: `${this.baseUrl}/api/lab/projects`,
@@ -218,7 +218,7 @@ export class RequestsSyncService {
   }
 
   /** Обновляет проект/подпроект (владелец/admin). Пустые поля не меняются на сервере. */
-  async updateProject(id: number, data: { code?: string; name?: string; description?: string }): Promise<void> {
+  async updateProject(id: number, data: { code?: string; name?: string; description?: string; group_id?: number }): Promise<void> {
     const token = await this.getToken();
     const res = await this.request({
       url: `${this.baseUrl}/api/lab/projects/${id}`,

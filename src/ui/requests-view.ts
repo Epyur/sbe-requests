@@ -14,9 +14,60 @@ const STATUS_LABELS: Record<string, string> = {
   completed: '✅ Завершена',
 };
 
+/** Ключи разделов дерева навигации (фасад, как в sbe-lims). */
+type NavKey = 'requests' | 'groups' | 'references';
+
+interface NavItem {
+  key: NavKey;
+  label: string;
+  sub: string;
+}
+
+interface NavGroup {
+  id: string;
+  icon: string;
+  label: string;
+  items: NavItem[];
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    id: 'req',
+    icon: '📋',
+    label: 'Заявки',
+    items: [
+      { key: 'requests', label: 'Все заявки', sub: 'Доступные вам заявки' },
+    ],
+  },
+  {
+    id: 'ctl',
+    icon: '⚙️',
+    label: 'Управление',
+    items: [
+      { key: 'groups', label: 'Группы', sub: 'Группы участников' },
+      { key: 'references', label: 'Справочники', sub: 'Лаборатории, методы, объекты' },
+    ],
+  },
+];
+
+const PAGE_META: Record<NavKey, { title: string; sub: string }> = {
+  requests: { title: 'Все заявки', sub: 'Доступные вам заявки' },
+  groups: { title: 'Группы', sub: 'Группы участников и видимость заявок' },
+  references: { title: 'Справочники', sub: 'Лаборатории, методы испытаний, объекты исследования' },
+};
+
 export class RequestsView extends ItemView {
   plugin: SbeRequestsPlugin;
   private containerElContent!: HTMLElement;
+  private bodyEl!: HTMLElement;
+  private navEl!: HTMLElement;
+  private pageTitleEl!: HTMLElement;
+  private pageSubEl!: HTMLElement;
+  private crumbEl!: HTMLElement;
+  private collapseLabel!: HTMLElement;
+  private projectsEl!: HTMLElement;
+  private key: NavKey = 'requests';
+  private collapsed = false;
   private searchQuery = '';
   private searchTimeout: number | null = null;
   /** null — фильтр выключен (все заявки); 0 — только «Без проекта»; >0 — конкретный проект. */
@@ -34,7 +85,7 @@ export class RequestsView extends ItemView {
   }
 
   getDisplayText(): string {
-    return 'Заявки на испытания';
+    return 'LogicLAB.Заявки';
   }
 
   getIcon(): string {
@@ -44,7 +95,8 @@ export class RequestsView extends ItemView {
   async onOpen(): Promise<void> {
     const container = this.contentEl;
     container.addClass('tn-req-container');
-    this.containerElContent = container.createDiv();
+    this.containerElContent = container.createDiv({ cls: 'tn-req-app' });
+
     try {
       const me = await this.plugin.syncService.getMyPermission();
       this.myRole = me.hasAccess ? me.role : '';
@@ -54,7 +106,145 @@ export class RequestsView extends ItemView {
       this.myRole = '';
       this.myEmail = '';
     }
-    await this.syncAndRender();
+    this.buildShell();
+    this.syncNavActive();
+    await this.renderPage();
+  }
+
+  refresh(): void {
+    void this.renderPage();
+  }
+
+  // ---- Каркас ----
+
+  private buildShell(): void {
+    // шапка
+    const topbar = this.containerElContent.createDiv({ cls: 'tn-req-topbar' });
+    topbar.createDiv({ cls: 'tn-req-module-title', text: 'LogicLAB.Заявки' });
+    this.crumbEl = topbar.createDiv({ cls: 'tn-req-crumb' });
+    const spacer = topbar.createDiv({ cls: 'tn-req-spacer' });
+    spacer.empty();
+    if (this.canEdit) {
+      const createBtn = topbar.createEl('button', { text: '＋ Создать', cls: 'tn-req-create' });
+      createBtn.addEventListener('click', () => this.showCreateForm());
+    }
+
+    // главная область: сайдбар + контент
+    const main = this.containerElContent.createDiv({ cls: 'tn-req-main' });
+
+    const sidebar = main.createDiv({ cls: 'tn-req-sidebar' });
+
+    // сворачивание
+    const collapseBtn = sidebar.createDiv({ cls: 'tn-req-collapse' });
+    collapseBtn.createSpan({ text: '▧' });
+    this.collapseLabel = collapseBtn.createSpan({ cls: 'tn-req-collapse-lbl', text: 'Свернуть' });
+    collapseBtn.addEventListener('click', () => this.toggleCollapse());
+
+    // дерево навигации
+    this.navEl = sidebar.createDiv({ cls: 'tn-req-nav' });
+    this.buildNav();
+    this.renderSidebarProjects();
+
+    // панель управления: синхронизация и справка
+    const actions = sidebar.createDiv({ cls: 'tn-req-sidebar-actions' });
+    const syncBtn = actions.createEl('button', { cls: 'tn-req-nav-action' });
+    syncBtn.createSpan({ text: '🔄' });
+    syncBtn.createSpan({ cls: 'tn-req-nav-lbl', text: 'Синхронизация' });
+    syncBtn.addEventListener('click', () => { void this.syncAndRender(); });
+    const helpBtn = actions.createEl('button', { cls: 'tn-req-nav-action' });
+    helpBtn.createSpan({ text: '?' });
+    helpBtn.createSpan({ cls: 'tn-req-nav-lbl', text: 'Справка' });
+    helpBtn.setAttr('title', 'Инструкция по заполнению заявок');
+    helpBtn.addEventListener('click', () => { void this.openHelp(); });
+
+    const content = main.createDiv({ cls: 'tn-req-content' });
+    this.pageTitleEl = content.createEl('h1', { cls: 'tn-req-page-title' });
+    this.pageSubEl = content.createDiv({ cls: 'tn-req-page-sub' });
+    this.bodyEl = content.createDiv();
+  }
+
+  private buildNav(): void {
+    this.navEl.empty();
+    for (const group of NAV_GROUPS) {
+      const grpBtn = this.navEl.createEl('button', { cls: 'tn-req-grp' });
+      grpBtn.createSpan({ cls: 'tn-req-grp-ico', text: group.icon });
+      grpBtn.createSpan({ cls: 'tn-req-grp-lbl', text: group.label });
+      grpBtn.createSpan({ cls: 'tn-req-grp-chev', text: '▶' });
+      grpBtn.addEventListener('click', () => {
+        grpBtn.classList.toggle('open');
+        grpBtn.classList.toggle('active');
+      });
+
+      const submenu = this.navEl.createDiv({ cls: 'tn-req-submenu' });
+      for (const item of group.items) {
+        const a = submenu.createEl('a', { cls: 'tn-req-nav-item', attr: { href: '#' } });
+        a.createSpan({ cls: 'tn-req-nav-lbl', text: item.label });
+        a.dataset.key = item.key;
+        a.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          this.key = item.key;
+          this.syncNavActive();
+          void this.renderPage();
+        });
+      }
+    }
+
+    const firstGroup = this.navEl.querySelector('.tn-req-grp');
+    if (firstGroup) {
+      firstGroup.classList.add('open', 'active');
+    }
+    this.syncNavActive();
+  }
+
+  private toggleCollapse(): void {
+    this.collapsed = !this.collapsed;
+    this.containerElContent.classList.toggle('collapsed', this.collapsed);
+    if (this.collapseLabel) {
+      this.collapseLabel.setText(this.collapsed ? 'Развернуть' : 'Свернуть');
+    }
+  }
+
+  private syncNavActive(): void {
+    this.navEl.querySelectorAll('.tn-req-nav-item').forEach((el) => {
+      const navEl = el as HTMLElement;
+      navEl.classList.toggle('active', navEl.dataset.key === this.key);
+    });
+  }
+
+  /** Дерево проектов в сайдбаре (под навигацией). */
+  private renderSidebarProjects(): void {
+    this.projectsEl = this.navEl.createDiv({ cls: 'tn-req-projects' });
+    this.rerenderSidebar();
+  }
+
+  private rerenderSidebar(): void {
+    if (!this.projectsEl) return;
+    this.projectsEl.empty();
+    const projectsTitle = this.projectsEl.createDiv({ cls: 'tn-req-projects-title' });
+    projectsTitle.createEl('span', { text: 'Проекты' });
+    if (this.canEdit) {
+      const addProject = projectsTitle.createEl('button', { text: '＋', cls: 'tn-btn tn-btn-ghost tn-req-btn-sm' });
+      addProject.addEventListener('click', () => this.showCreateProjectForm());
+    }
+    this.renderProjectTree(this.projectsEl);
+  }
+
+  // ---- Страница ----
+
+  private async renderPage(): Promise<void> {
+    const meta = PAGE_META[this.key];
+    this.crumbEl.setText(meta.title);
+    this.pageTitleEl.setText(meta.title);
+    this.pageSubEl.setText(meta.sub);
+
+    this.bodyEl.empty();
+    if (this.key === 'requests') {
+      this.renderView();
+    } else if (this.key === 'groups') {
+      this.renderGroupsView();
+    } else {
+      this.renderReferencesView();
+    }
   }
 
   /** Роль editor/admin — можно создавать/редактировать заявки и справочники. */
@@ -66,28 +256,9 @@ export class RequestsView extends ItemView {
     return this.myRole === 'admin';
   }
 
-  refresh(): void {
-    this.renderView();
-  }
-
   private renderView(): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
-
-    const header = container.createDiv({ cls: 'tn-req-header' });
-    header.createEl('h3', { text: '📋 Заявки на испытания' });
-    if (this.canEdit) {
-      const createBtn = header.createEl('button', { text: '➕ Новая заявка', cls: 'tn-btn tn-btn-primary' });
-      createBtn.addEventListener('click', () => this.showCreateForm());
-    }
-    const groupsBtn = header.createEl('button', { text: '👥 Группы', cls: 'tn-btn tn-btn-ghost' });
-    groupsBtn.addEventListener('click', () => this.renderGroupsView());
-    const refBtn = header.createEl('button', { text: '📚 Справочники', cls: 'tn-btn tn-btn-ghost' });
-    refBtn.addEventListener('click', () => this.renderReferencesView());
-    const syncBtn = header.createEl('button', { text: '🔄', cls: 'tn-btn tn-btn-ghost' });
-    syncBtn.addEventListener('click', () => { void this.syncAndRender(); });
-    const helpBtn = header.createEl('button', { text: '?', cls: 'tn-btn tn-btn-ghost', attr: { title: 'Инструкция по заполнению заявок' } });
-    helpBtn.addEventListener('click', () => { void this.openHelp(); });
 
     const searchInput = container.createEl('input', {
       attr: { type: 'text', placeholder: '🔍 Поиск по названию...' },
@@ -100,24 +271,12 @@ export class RequestsView extends ItemView {
       this.searchTimeout = window.setTimeout(() => this.renderView(), 400);
     });
 
-    const layout = container.createDiv({ cls: 'tn-req-layout' });
-
-    // Дерево проектов (левая колонка)
-    const treeDiv = layout.createDiv({ cls: 'tn-req-tree' });
-    const treeTitle = treeDiv.createDiv({ cls: 'tn-req-tree-title' });
-    treeTitle.setText('Проекты');
-    if (this.canEdit) {
-      const addProject = treeTitle.createEl('button', { text: '＋', cls: 'tn-btn tn-btn-ghost tn-req-btn-sm' });
-      addProject.addEventListener('click', () => this.showCreateProjectForm());
-    }
-    this.renderProjectTree(treeDiv);
-
-    // Список заявок (правая колонка)
-    const listDiv = layout.createDiv({ cls: 'tn-req-list' });
+    // Список заявок
+    const listDiv = container.createDiv({ cls: 'tn-req-list' });
     const requests = this.filteredRequests();
     if (requests.length === 0) {
       const empty = listDiv.createDiv({ cls: 'tn-req-meta tn-req-p24' });
-      empty.setText('Нет заявок. Нажмите «➕ Новая заявка», чтобы создать.');
+      empty.setText('Нет заявок. Нажмите «＋ Создать», чтобы создать.');
       return;
     }
 
@@ -162,12 +321,15 @@ export class RequestsView extends ItemView {
 
     const item = (label: string, projectId: number, depth: number, isRoot: boolean): void => {
       const row = container.createDiv({ cls: 'tn-req-tree-item' });
-      if (depth > 0) row.style.paddingLeft = `${8 + depth * 14}px`;
+      if (depth > 0) row.dataset.depth = String(depth);
       row.createEl('span', { text: label });
       if (this.selectedProjectId === projectId) row.addClass('tn-req-tree-selected');
       row.addEventListener('click', () => {
         this.selectedProjectId = projectId;
-        this.renderView();
+        this.key = 'requests';
+        this.syncNavActive();
+        this.rerenderSidebar();
+        void this.renderPage();
       });
       if (projectId > 0 && this.canEdit) {
         const proj = this.plugin.requestsDb.getProjects().find(p => p.id === projectId);
@@ -225,6 +387,12 @@ export class RequestsView extends ItemView {
     return p ? `${p.code}${p.name ? ' — ' + p.name : ''}` : '—';
   }
 
+  /** Группа проекта (0 — публичный/не задана). */
+  private projectGroupId(projectId: number): number {
+    const p = this.plugin.requestsDb.getProjects().find(pr => pr.id === projectId);
+    return p ? (p.group_id || 0) : 0;
+  }
+
   private groupName(groupId: number): string {
     if (groupId <= 0) return 'Без группы';
     const g = this.plugin.requestsDb.getGroups().find(gr => gr.id === groupId);
@@ -240,7 +408,7 @@ export class RequestsView extends ItemView {
   // ---- Карточка заявки ----
 
   private renderRequestDetail(req: LabRequest): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
@@ -446,7 +614,7 @@ export class RequestsView extends ItemView {
   }
 
   private showRequestForm(existing: LabRequest | null): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
@@ -620,6 +788,15 @@ export class RequestsView extends ItemView {
       groupSelect.createEl('option', { value: String(g.id), text: g.name });
     }
     if (existing) groupSelect.value = String(existing.group_id);
+    else {
+      // Новая заявка: подставляем группу выбранного проекта, если она задана.
+      const autoGroupId = this.projectGroupId(Number(projectSelect.value));
+      if (autoGroupId > 0) groupSelect.value = String(autoGroupId);
+      projectSelect.addEventListener('change', () => {
+        const gid = this.projectGroupId(Number(projectSelect.value));
+        if (gid > 0) groupSelect.value = String(gid);
+      });
+    }
 
     // Методы (чекбоксы, сгруппированы по лабораториям)
     const methodsLabel = container.createEl('label', { text: existing ? 'Метод испытаний (текущий)' : 'Методы испытаний', cls: 'tn-req-label' });
@@ -914,7 +1091,7 @@ export class RequestsView extends ItemView {
   // ---- Форма создания проекта ----
 
   private showCreateProjectForm(): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
@@ -942,6 +1119,13 @@ export class RequestsView extends ItemView {
     const eknCb = eknWrapper.createEl('input', { attr: { type: 'checkbox' }, cls: 'tn-req-cb' });
     eknWrapper.createEl('span').setText(' Проект ЕКН (серийная продукция)');
 
+    const groupLabel = container.createEl('label', { text: 'Группа (видимость)', cls: 'tn-req-label' });
+    const groupSelect = container.createEl('select', { cls: 'tn-req-select' });
+    groupSelect.createEl('option', { value: '0', text: '— Публичный —' });
+    for (const g of this.plugin.requestsDb.getGroups()) {
+      groupSelect.createEl('option', { value: String(g.id), text: g.name });
+    }
+
     const btnRow = container.createDiv({ cls: 'tn-req-header tn-req-mt12' });
     const saveBtn = btnRow.createEl('button', { text: '💾 Создать проект', cls: 'tn-btn tn-btn-primary' });
     const cancelBtn = btnRow.createEl('button', { text: 'Отмена', cls: 'tn-btn tn-btn-ghost' });
@@ -959,6 +1143,7 @@ export class RequestsView extends ItemView {
           name: nameInput.value.trim(),
           description: descInput.value.trim(),
           is_ekn: eknCb.checked,
+          group_id: Number(groupSelect.value),
         });
         new Notice('Проект создан');
         await this.syncAndRender();
@@ -971,7 +1156,7 @@ export class RequestsView extends ItemView {
   }
 
   private showEditProjectForm(project: LabProject): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
@@ -991,6 +1176,14 @@ export class RequestsView extends ItemView {
     const codeInput = container.createEl('input', { attr: { type: 'text', placeholder: 'Например: ЕКН-2026-001' }, cls: 'tn-req-input' });
     codeInput.value = project.code;
 
+    const groupLabel = container.createEl('label', { text: 'Группа (видимость)', cls: 'tn-req-label' });
+    const groupSelect = container.createEl('select', { cls: 'tn-req-select' });
+    groupSelect.createEl('option', { value: '0', text: '— Публичный —' });
+    for (const g of this.plugin.requestsDb.getGroups()) {
+      groupSelect.createEl('option', { value: String(g.id), text: g.name });
+    }
+    groupSelect.value = String(project.group_id || 0);
+
     const btnRow = container.createDiv({ cls: 'tn-req-header tn-req-mt12' });
     const saveBtn = btnRow.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });
     const cancelBtn = btnRow.createEl('button', { text: 'Отмена', cls: 'tn-btn tn-btn-ghost' });
@@ -1006,6 +1199,7 @@ export class RequestsView extends ItemView {
           code,
           name: nameInput.value.trim(),
           description: descInput.value.trim(),
+          group_id: Number(groupSelect.value),
         });
         new Notice('Проект обновлён');
         await this.syncAndRender();
@@ -1020,14 +1214,10 @@ export class RequestsView extends ItemView {
   // ---- Группы ----
 
   private renderGroupsView(): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
-    const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
-    backBtn.addEventListener('click', () => this.renderView());
-
     const header = container.createDiv({ cls: 'tn-req-header' });
-    header.createEl('h3', { text: '👥 Группы' });
     if (this.canEdit) {
       const addBtn = header.createEl('button', { text: '➕ Создать группу', cls: 'tn-btn tn-btn-primary' });
       addBtn.addEventListener('click', () => this.showCreateGroupForm());
@@ -1097,7 +1287,7 @@ export class RequestsView extends ItemView {
   }
 
   private showCreateGroupForm(): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
@@ -1134,15 +1324,10 @@ export class RequestsView extends ItemView {
   // ---- Справочники ----
 
   private renderReferencesView(): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
 
-    const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
-    backBtn.addEventListener('click', () => this.renderView());
-
     const header = container.createDiv({ cls: 'tn-req-header' });
-    header.createEl('h3', { text: '📚 Справочники' });
-
     if (this.canEdit) {
       const objectBtn = header.createEl('button', { text: '➕ Объект', cls: 'tn-btn tn-btn-ghost' });
       objectBtn.addEventListener('click', () => this.showCreateObjectForm());
@@ -1189,7 +1374,7 @@ export class RequestsView extends ItemView {
   }
 
   private showCreateObjectForm(): void {
-    const container = this.containerElContent;
+    const container = this.bodyEl;
     container.empty();
     const backBtn = container.createEl('button', { text: '← Назад', cls: 'tn-btn tn-btn-ghost' });
     backBtn.addEventListener('click', () => this.renderReferencesView());
@@ -1234,10 +1419,12 @@ export class RequestsView extends ItemView {
   async syncAndRender(): Promise<void> {
     try {
       await this.plugin.syncService.sync();
-      this.renderView();
+      this.rerenderSidebar();
+      await this.renderPage();
     } catch (e: unknown) {
       new Notice(`Заявки: синхронизация не выполнена — ${errorMessage(e)}`);
-      this.renderView();
+      this.rerenderSidebar();
+      await this.renderPage();
     }
   }
 

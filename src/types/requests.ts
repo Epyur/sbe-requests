@@ -64,6 +64,7 @@ export interface LabProject {
   name: string;
   description: string;
   is_ekn: boolean;
+  group_id: number;
   owner_email: string;
   created_at: string;
   updated_at: string;

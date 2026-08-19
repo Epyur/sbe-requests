@@ -12,9 +12,9 @@ SBE-плагин «Заявки на испытания». Клиент lab-serv
 | GET | `/labs` `/methods` `/objects` | viewer | `{"labs":[...]}` / `{"methods":[...]}` / `{"objects":[...]}` |
 | POST | `/labs` `/methods` | admin | `{code,name,description}` / `{code,name,lab_id,description}` → `{id}` |
 | POST | `/objects` | editor | `{name,description,characteristics}` → `{id}` |
-| GET | `/projects` | viewer | `{"projects":[...]}` (все) |
-| POST | `/projects` | editor | `{parent_id,code,name,description,is_ekn}` → `{id}`; 409 code exists |
-| PATCH | `/projects/{id}` | editor+/владелец | `{parent_id,code,name,description,is_ekn}` → `{ok}` |
+| GET | `/projects` | viewer | `{"projects":[...]}` (видимые: публичные + свои + по группе + admin; включены предки видимых) |
+| POST | `/projects` | editor | `{parent_id,code,name,description,is_ekn,group_id}` → `{id}`; 409 code exists; 400 group not found |
+| PATCH | `/projects/{id}` | editor+/владелец | `{parent_id,code,name,description,is_ekn,group_id}` → `{ok}` (0 = «отвязать» группу) |
 | GET | `/requests` | viewer | `{"requests":[...]}` (только видимые) |
 | POST | `/requests` | editor | `{title,description,object_id,project_id,group_id,priority,test_purpose,external_lab_id,ekn,method_ids}` → `{request}`; при `ekn` без проекта — автопроект (code=ekn) |
 | GET | `/requests/{id}` | viewer (видимость) | `{"request":{...}}`; 403 если не видно |
@@ -47,7 +47,7 @@ ObjectCharacteristics {
   ekn_snapshot?: { name, thickness, sto_number, sto_name };   // снимок sbe-ekn
 }
 LabObject{ id, name, description, characteristics: ObjectCharacteristics, created_at, updated_at }
-LabProject{ id, parent_id, code, name, description, is_ekn, owner_email, created_at, updated_at }
+LabProject{ id, parent_id, code, name, description, is_ekn, group_id, owner_email, created_at, updated_at }
 GroupMember{ email, role }
 LabGroup  { id, name, owner_email, members: GroupMember[], created_at, updated_at }
 RequestFile{ file_key, file_name, file_size, file_url }
@@ -148,4 +148,11 @@ external_lab_id, ekn, updated_at, method_id}`. `id=0` — новая заявк�
 - Кнопка **«?»** рядом с «🔄» — открывает справку `Заявки на испытания — инструкция.md`
   (создаётся в корне вольта из `src/ui/help.ts`, если отсутствует). Редактирование проекта —
   кнопка «✎» в дереве проектов (владелец/admin, `PATCH /projects/{id}`).
+- **Видимость проектов по группе** (2026-08-19): проект с `group_id` видят только члены
+  этой группы + владелец + admin (сервер фильтрует `/projects` и `/sync/pull`; предки
+  видимых проектов включаются, чтобы дерево не рвалось). В форме проекта — select
+  «Группа (видимость)» («— Публичный —» = 0). При создании заявки в проекте с группой
+  поле «Группа (видимость)» формы автоматически подставляется группой проекта
+  (смена проекта в форме переустанавливает его группу; при редактировании заявки
+  существующее значение не трогается).
 - Настройки: `apiUrl` + раздел «Права доступа» (роли + общий доступ, admin).
