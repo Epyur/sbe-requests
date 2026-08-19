@@ -37,12 +37,17 @@ export class RequestsSettingsTab extends PluginSettingTab {
     void this.renderPermissions(permsDiv);
   }
 
-  /** Вкладка «Права доступа»: только admin может просматривать и менять роли. */
+  /** Вкладка «Права доступа»: только admin/superadmin может просматривать и менять роли.
+   * Роль superadmin (выше admin, см. lab-service/AGENTS.md) относится к тому же
+   * общему `lab_permissions` — сервер сам не даст назначить/снять superadmin никому
+   * кроме действующего superadmin, здесь только не блокируем панель по точному
+   * сравнению строки. */
   private async renderPermissions(container: HTMLElement): Promise<void> {
     const roleLabels: Record<string, string> = {
       viewer: 'Просмотр',
       editor: 'Редактор',
       admin: 'Администратор',
+      superadmin: 'Супер-администратор',
     };
     try {
       const me = await this.plugin.syncService.getMyPermission();
@@ -50,7 +55,7 @@ export class RequestsSettingsTab extends PluginSettingTab {
         container.setText('Нет доступа к серверу. Запросите ключ в ЦУП и получите доступ у администратора.');
         return;
       }
-      if (me.role !== 'admin') {
+      if (me.role !== 'admin' && me.role !== 'superadmin') {
         container.setText(`Ваша роль: ${roleLabels[me.role] || me.role}. Только администратор может управлять правами.`);
         return;
       }
@@ -95,6 +100,9 @@ export class RequestsSettingsTab extends PluginSettingTab {
           roleSelect.createEl('option', { value: 'viewer', text: 'Просмотр' });
           roleSelect.createEl('option', { value: 'editor', text: 'Редактор' });
           roleSelect.createEl('option', { value: 'admin', text: 'Администратор' });
+          if (me.role === 'superadmin') {
+            roleSelect.createEl('option', { value: 'superadmin', text: 'Супер-администратор' });
+          }
           roleSelect.value = p.role;
           roleSelect.addEventListener('change', async () => {
             try {
@@ -129,6 +137,9 @@ export class RequestsSettingsTab extends PluginSettingTab {
       roleSelect.createEl('option', { value: 'viewer', text: 'Просмотр' });
       roleSelect.createEl('option', { value: 'editor', text: 'Редактор' });
       roleSelect.createEl('option', { value: 'admin', text: 'Администратор' });
+      if (me.role === 'superadmin') {
+        roleSelect.createEl('option', { value: 'superadmin', text: 'Супер-администратор' });
+      }
       const actionCell = addRow.createEl('td');
       const addBtn = actionCell.createEl('button', { text: '➕ Добавить', cls: 'tn-btn tn-btn-primary' });
       addBtn.addEventListener('click', async () => {
