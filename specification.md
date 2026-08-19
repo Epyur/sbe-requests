@@ -10,15 +10,16 @@ SBE-плагин «Заявки на испытания». Клиент lab-serv
 |---|---|---|---|
 | GET | `/health` | — | `{"status":"ok"}` |
 | GET | `/labs` `/methods` `/objects` | viewer | `{"labs":[...]}` / `{"methods":[...]}` / `{"objects":[...]}` |
-| POST | `/labs` `/methods` | admin | `{code,name,description}` / `{code,name,lab_id,description}` → `{id}` |
+| POST | `/labs` | superadmin | `{code,name,description,type?}` → `{id}` (создание — только в sbe-lims) |
+| POST | `/methods` | admin | `{code,name,lab_ids: number[],description,determinable_indicators?}` → `{id}` (минимум одна лаба; метод может принадлежать нескольким, 2026-08-19) |
 | POST | `/objects` | editor | `{name,description,characteristics}` → `{id}` |
 | GET | `/projects` | viewer | `{"projects":[...]}` (видимые: публичные + свои + по группе + admin; включены предки видимых) |
 | POST | `/projects` | editor | `{parent_id,code,name,description,is_ekn,group_id}` → `{id}`; 409 code exists; 400 group not found |
 | PATCH | `/projects/{id}` | editor+/владелец | `{parent_id,code,name,description,is_ekn,group_id}` → `{ok}` (0 = «отвязать» группу) |
 | GET | `/requests` | viewer | `{"requests":[...]}` (только видимые) |
-| POST | `/requests` | editor | `{title,description,object_id,project_id,group_id,priority,test_purpose,external_lab_id,ekn,external_id,method_ids}` → `{request}`; при `ekn` без проекта — автопроект (code=ekn) |
+| POST | `/requests` | editor | `{title,description,object_id,project_id,group_id,priority,test_purpose,ekn,external_id,methods:[{method_id,lab_id}]}` → `{requests:[...]}`; `lab_id` — обязана быть в `method.lab_ids` (400 иначе); при `ekn` без проекта — автопроект (code=ekn) |
 | GET | `/requests/{id}` | viewer (видимость) | `{"request":{...}}`; 403 если не видно |
-| PATCH | `/requests/{id}` | editor+/владелец | `{title,description,object_id,project_id,group_id,priority,test_purpose,external_lab_id,ekn,external_id,method_ids}` → `{request}` |
+| PATCH | `/requests/{id}` | editor+/владелец | `{title,description,object_id,project_id,group_id,priority,test_purpose,ekn,external_id}` → `{request}` (метод/лаба фиксируются при создании, не редактируются) |
 | POST | `/requests/{id}/status` | editor | `{status}` (new/processing/completed) → `{ok}` |
 | GET | `/groups` | viewer | `{"groups":[...]}` (мои + где участник) |
 | POST | `/groups` | editor | `{name}` → `{id}` |
@@ -35,8 +36,14 @@ SBE-плагин «Заявки на испытания». Клиент lab-serv
 ## Модели (JSON, соответствуют Go-структурам lab-service)
 
 ```ts
-Lab      { id, code, name, description, type: 'internal'|'external', created_at, updated_at }
-LabMethod{ id, code, name, lab_id, description, determinable_indicators: string[], created_at, updated_at }
+Lab      { id, code, name, description, type: 'internal'|'external',
+           parent_lab_id,  // только у внешних (обязателен при создании); 0 у внутренних —
+                            // внешняя лаба не существует самостоятельно, см. lab-service/AGENTS.md
+           created_at, updated_at }
+LabMethod{ id, code, name,
+           lab_ids: number[],  // может принадлежать нескольким лабам (method_labs, 2026-08-19);
+                                // при создании заявки выбирается ОДНА конкретная (см. LabRequest.lab_id)
+           description, determinable_indicators: string[], created_at, updated_at }
 ObjectCharacteristics {
   ekn?: string;                    // номер ЕКН (серийная)
   batch_number?: number;           // номер партии (обязателен при ЕКН, целое)
@@ -55,10 +62,13 @@ LabRequest{ id, number_seq, number_year, title, description, object_id, project_
             owner_email, status: 'new'|'received'|'processing'|'completed',
             priority: 'normal'|'critical'|'blocker',
             test_purpose: ''|'quality_control'|'rnd'|'certification'|'declaration',
-            external_lab_id: number, ekn: string,
+            ekn: string,
             external_id: string,  // номер legacy email-трекера («LPIZAYAVKINAPRO-<N>»);
                                    // у новых заявок пусто, только для миграции
-            method_id: number, customer_number: string, lab_number: string,
+            method_id: number,
+            lab_id: number,  // конкретная лаба из method.lab_ids, зафиксирована при создании
+                              // (заменяет старую external_lab_id — упразднена 2026-08-19)
+            customer_number: string, lab_number: string,
             group_key?: string,   // только у локальных новых под-заявок одного создания
             parent_id?: number,   // только у локальных черновиков «добавление метода»
             files: RequestFile[], created_at, updated_at, sync_status }
@@ -77,7 +87,9 @@ LabRequest{ id, number_seq, number_year, title, description, object_id, project_
 
 PushRequest (тело `POST /sync/push`, заявки): `{id, client_id, group_key, parent_id, title,
 description, object_id, project_id, group_id, status, priority, test_purpose,
-external_lab_id, ekn, external_id, updated_at, method_id}`. `id=0` — новая заявка: без `parent_id` сервер
+ekn, external_id, updated_at, method_id, lab_id}`. `lab_id` — конкретная лаба из
+`method.lab_ids`, обязательна при создании (заменяет старую `external_lab_id`, 2026-08-19).
+`id=0` — новая заявка: без `parent_id` сервер
 присваивает NNN (под-заявки с одинаковым `group_key` получают один NNN); с `parent_id` —
 **под-заявка делит NNN родителя** (только родитель в статусе `new`, владелец/admin; иначе —
 новый NNN). Ответ `{inserted, updated, created:[{client_id, group_key, request}]}` — клиент
@@ -142,15 +154,17 @@ admin+; создание лабораторий (`POST /labs`, использу�
     (Серийный/Экспериментальный), толщина мм, идентификатор образца (обяз.), целевой показатель.
   - **Приоритет** (Средний/Критичный/Блокер), **Цель испытания** (Текущий контроль —
     по умолчанию / НИОКР / Сертификация / Декларирование).
-  - **Внешняя лаборатория**: чекбокс «Провести испытания во внешней лаборатории» → select
-    внешних лабораторий (`labs.type='external'`).
-  - **Методы** (группы по лабораториям) + **Определяемые показатели** — чекбоксы из
-    `method.determinable_indicators` выбранных методов. При создании с несколькими методами
-    формируется N под-заявок с общим NNN (общий `group_key`).
-  - **Редактирование заявки**: только статус `new`. Метод зафиксирован; блок
-    **«➕ Добавить методы (создаст под-заявки с тем же номером)»** — отмеченные методы
-    создают под-заявки с `parent_id` (делят NNN родителя; `requestNumber`/`buildDraftNumbers`
-    показывают превью номера до синхронизации).
+  - **Методы** (группы по лабораториям; метод с несколькими `lab_ids` показывается под
+    каждой своей лабой отдельной строкой — чекбокс кодирует пару `"methodId:labId"`,
+    выбор пары фиксирует, где именно выполняется испытание; заменяет старый отдельный
+    чекбокс «внешняя лаборатория», 2026-08-19, см. `lab-service/AGENTS.md`) +
+    **Определяемые показатели** — чекбоксы из `method.determinable_indicators`
+    выбранных методов. При создании с несколькими методами формируется N под-заявок
+    с общим NNN (общий `group_key`), каждая со своей парой метод+лаба.
+  - **Редактирование заявки**: только статус `new`. Метод и лаба зафиксированы; блок
+    **«➕ Добавить методы (создаст под-заявки с тем же номером)»** — отмеченные
+    пары метод+лаба создают под-заявки с `parent_id` (делят NNN родителя;
+    `requestNumber`/`buildDraftNumbers` показывают превью номера до синхронизации).
 - Кнопка **«?»** рядом с «🔄» — открывает справку `Заявки на испытания — инструкция.md`
   (создаётся в корне вольта из `src/ui/help.ts`, если отсутствует). Редактирование проекта —
   кнопка «✎» в дереве проектов (владелец/admin, `PATCH /projects/{id}`).

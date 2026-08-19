@@ -1,22 +1,26 @@
 /** Типы модуля «Заявки на испытания» SBE. Модель совместима с lab-service (server_back/lab-service). */
 
-/** Лаборатория (справочник). type: internal | external. */
+/** Лаборатория (справочник). type: internal | external. Внешняя лаба не существует
+ * самостоятельно — parent_lab_id указывает на внутреннюю (0 у внутренних). */
 export interface Lab {
   id: number;
   code: string;
   name: string;
   description: string;
   type: string;
+  parent_lab_id: number;
   created_at: string;
   updated_at: string;
 }
 
-/** Метод испытаний (привязан к лаборатории lab_id). */
+/** Метод испытаний. Может принадлежать нескольким лабораториям (2026-08-19,
+ * method_labs many-to-many, заменяет старую единичную lab_id) — при создании
+ * заявки нужно выбрать ОДНУ конкретную из lab_ids (см. LabRequest.lab_id). */
 export interface LabMethod {
   id: number;
   code: string;
   name: string;
-  lab_id: number;
+  lab_ids: number[];
   description: string;
   determinable_indicators: string[];
   created_at: string;
@@ -113,8 +117,6 @@ export interface LabRequest {
   priority: string;
   /** Цель испытания: quality_control | rnd | certification | declaration. */
   test_purpose: string;
-  /** Внешняя лаборатория (0 = внутренняя; >0 = labs.id с type=external). */
-  external_lab_id: number;
   /** Номер ЕКН (для автопроекта, если проект не выбран). */
   ekn: string;
   /** Номер из legacy-системы (email-трекер LPITrack, «LPIZAYAVKINAPRO-<N>») —
@@ -122,6 +124,10 @@ export interface LabRequest {
   external_id: string;
   /** Метод испытаний (1 заявка = 1 метод). */
   method_id: number;
+  /** Конкретная лаборатория из lab_ids метода, выбранная при создании (2026-08-19,
+   * заменяет старую external_lab_id — методы теперь могут принадлежать нескольким
+   * лабам, поэтому заявка обязана явно зафиксировать одну; может быть внешней). */
+  lab_id: number;
   /** Номер заказчику: {projectCode}-{NNN}/{yyyy}-{labCode}-{methodCode}. */
   customer_number: string;
   /** Номер лаборатории: {NNN}/{yyyy}-{methodCode}. */

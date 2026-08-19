@@ -430,7 +430,7 @@ export class RequestsView extends ItemView {
     }
     meta.createDiv({ text: `⚡ Приоритет: ${this.priorityLabel(req.priority)}` });
     if (req.test_purpose) meta.createDiv({ text: `🎯 Цель испытания: ${this.purposeLabel(req.test_purpose)}` });
-    if (req.external_lab_id > 0) meta.createDiv({ text: `🏭 Внешняя лаборатория: ${this.labName(req.external_lab_id)}` });
+    if (req.lab_id > 0) meta.createDiv({ text: `🏢 Лаборатория: ${this.labName(req.lab_id)}` });
     meta.createDiv({ text: `👤 Владелец: ${req.owner_email || '—'}` });
     meta.createDiv({ text: `📅 Создана: ${this.formatDate(req.created_at)}` });
     meta.createDiv({ text: `📅 Обновлена: ${this.formatDate(req.updated_at)}` });
@@ -550,7 +550,7 @@ export class RequestsView extends ItemView {
     if (!parent || parent.number_seq <= 0) return null;
     const m = this.plugin.requestsDb.getMethods().find(md => md.id === req.method_id);
     if (!m) return null;
-    const l = this.plugin.requestsDb.getLabs().find(lb => lb.id === m.lab_id);
+    const l = this.plugin.requestsDb.getLabs().find(lb => lb.id === req.lab_id);
     const labCode = l ? l.code : '';
     const seq = parent.number_seq;
     const year = parent.number_year;
@@ -642,31 +642,6 @@ export class RequestsView extends ItemView {
     purposeSelect.createEl('option', { value: 'certification', text: 'Сертификация' });
     purposeSelect.createEl('option', { value: 'declaration', text: 'Декларирование' });
     purposeSelect.value = existing && existing.test_purpose ? existing.test_purpose : 'quality_control';
-
-    // Внешняя лаборатория
-    const externalLabLabel = container.createEl('label', { cls: 'tn-req-filter-label tn-req-mb4' });
-    const externalLabCb = externalLabLabel.createEl('input', { attr: { type: 'checkbox' }, cls: 'tn-req-cb' });
-    externalLabLabel.createEl('span').setText(' Провести испытания во внешней лаборатории');
-    const externalLabs = this.plugin.requestsDb.getLabs().filter(l => l.type === 'external');
-    const externalLabSelect = container.createEl('select', { cls: 'tn-req-select tn-req-mb8' });
-    externalLabSelect.createEl('option', { value: '0', text: '— Выберите внешнюю лабораторию —' });
-    for (const l of externalLabs) {
-      externalLabSelect.createEl('option', { value: String(l.id), text: `${l.code}${l.name ? ' — ' + l.name : ''}` });
-    }
-    externalLabSelect.hide();
-    const existingExternal = existing ? existing.external_lab_id : 0;
-    if (existingExternal > 0) {
-      externalLabCb.checked = true;
-      externalLabSelect.show();
-      externalLabSelect.value = String(existingExternal);
-    }
-    externalLabCb.addEventListener('change', () => {
-      if (externalLabCb.checked) externalLabSelect.show();
-      else {
-        externalLabSelect.hide();
-        externalLabSelect.value = '0';
-      }
-    });
 
     // Объект исследования: ЕКН или экспериментальный образец
     const objectSection = container.createDiv({ cls: 'tn-req-object-section' });
@@ -800,18 +775,22 @@ export class RequestsView extends ItemView {
 
     // Методы (чекбоксы, сгруппированы по лабораториям)
     const methodsLabel = container.createEl('label', { text: existing ? 'Метод испытаний (текущий)' : 'Методы испытаний', cls: 'tn-req-label' });
+    // Чекбоксы по паре (метод, лаба) — метод может принадлежать нескольким лабам
+    // (2026-08-19, method_labs), заявка обязана зафиксировать ОДНУ конкретную:
+    // значение чекбокса "methodId:labId", метод показывается под каждой своей лабой.
     const methodsDiv = container.createDiv({ cls: 'tn-req-methods tn-req-mb12' });
     const methods = this.plugin.requestsDb.getMethods();
     const labs = this.plugin.requestsDb.getLabs();
     const labById = new Map(labs.map(l => [l.id, l]));
     const methodsByLab = new Map<number, typeof methods>();
     for (const m of methods) {
-      const key = m.lab_id;
-      const list = methodsByLab.get(key) || [];
-      list.push(m);
-      methodsByLab.set(key, list);
+      for (const labId of m.lab_ids) {
+        const list = methodsByLab.get(labId) || [];
+        list.push(m);
+        methodsByLab.set(labId, list);
+      }
     }
-    const selected = new Set(existing ? [existing.method_id] : []);
+    const selectedKey = existing ? `${existing.method_id}:${existing.lab_id}` : '';
     // Добавление методов доступно только к заявке в статусе «Новая» с присвоенным номером.
     const canAdd = !!(existing && existing.status === 'new' && existing.number_seq > 0);
     const usedMethodIds = new Set<number>();
@@ -827,11 +806,12 @@ export class RequestsView extends ItemView {
       const labDiv = methodsDiv.createDiv({ cls: 'tn-req-meta tn-req-mb4' });
       labDiv.setText(`🏢 ${lab ? `${lab.code} — ${lab.name}` : `Лаборатория #${labId}`}`);
       for (const m of list) {
+        const key = `${m.id}:${labId}`;
         const wrapper = methodsDiv.createEl('label', { cls: 'tn-req-filter-label' });
-        const cb = wrapper.createEl('input', { attr: { type: 'checkbox', value: String(m.id) }, cls: 'tn-req-cb' });
-        cb.checked = selected.has(m.id);
+        const cb = wrapper.createEl('input', { attr: { type: 'checkbox', value: key }, cls: 'tn-req-cb' });
+        cb.checked = selectedKey === key;
         if (existing) {
-          // Метод заявки фиксирован: 1 заявка = 1 метод (меняется только созданием новой заявки).
+          // Метод+лаба заявки фиксированы: 1 заявка = 1 метод (меняется только созданием новой заявки).
           cb.disabled = true;
         }
         cb.addEventListener('change', () => this.updateIndicators(methodsDiv, addDiv, indicatorsDiv));
@@ -844,15 +824,23 @@ export class RequestsView extends ItemView {
     const addLabel = container.createEl('label', { text: '➕ Добавить методы (создаст под-заявки с тем же номером)', cls: 'tn-req-label' });
     const addDiv = container.createDiv({ cls: 'tn-req-methods tn-req-mb12' });
     if (canAdd) {
-      const addable = methods.filter(m => !usedMethodIds.has(m.id));
-      if (addable.length === 0) {
-        addDiv.createDiv({ cls: 'tn-req-meta' }).setText('Все методы уже добавлены к этой заявке');
+      let addableCount = 0;
+      for (const [labId, list] of methodsByLab) {
+        const addable = list.filter(m => !usedMethodIds.has(m.id));
+        if (addable.length === 0) continue;
+        addableCount += addable.length;
+        const lab = labById.get(labId);
+        const labDiv = addDiv.createDiv({ cls: 'tn-req-meta tn-req-mb4' });
+        labDiv.setText(`🏢 ${lab ? `${lab.code} — ${lab.name}` : `Лаборатория #${labId}`}`);
+        for (const m of addable) {
+          const wrapper = addDiv.createEl('label', { cls: 'tn-req-filter-label' });
+          const cb = wrapper.createEl('input', { attr: { type: 'checkbox', value: `${m.id}:${labId}` }, cls: 'tn-req-cb' });
+          cb.addEventListener('change', () => this.updateIndicators(methodsDiv, addDiv, indicatorsDiv));
+          wrapper.createEl('span').setText(` ${m.code} — ${m.name}`);
+        }
       }
-      for (const m of addable) {
-        const wrapper = addDiv.createEl('label', { cls: 'tn-req-filter-label' });
-        const cb = wrapper.createEl('input', { attr: { type: 'checkbox', value: String(m.id) }, cls: 'tn-req-cb' });
-        cb.addEventListener('change', () => this.updateIndicators(methodsDiv, addDiv, indicatorsDiv));
-        wrapper.createEl('span').setText(` ${m.code} — ${m.name}`);
+      if (addableCount === 0) {
+        addDiv.createDiv({ cls: 'tn-req-meta' }).setText('Все методы уже добавлены к этой заявке');
       }
     } else {
       addLabel.hide();
@@ -922,13 +910,13 @@ export class RequestsView extends ItemView {
       }
       if (objectId <= 0) { new Notice('Не удалось создать объект исследования'); return; }
 
-      const methodIds = Array.from(methodsDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
-        .map(cb => Number(cb.value)).filter(v => v > 0);
-      if (methodIds.length === 0) { new Notice('Выберите хотя бы один метод'); return; }
+      const methodLabPairs = Array.from(methodsDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
+        .map(cb => cb.value.split(':').map(Number) as [number, number])
+        .filter(([mid, lid]) => mid > 0 && lid > 0);
+      if (methodLabPairs.length === 0) { new Notice('Выберите хотя бы один метод'); return; }
 
       const priority = prioritySelect.value || 'normal';
       const testPurpose = purposeSelect.value || '';
-      const externalLabId = externalLabCb.checked ? Number(externalLabSelect.value) || 0 : 0;
 
       saveBtn.setText('⏳');
       saveBtn.setAttr('disabled', 'true');
@@ -944,19 +932,21 @@ export class RequestsView extends ItemView {
           existing.group_id = Number(groupSelect.value);
           existing.priority = priority;
           existing.test_purpose = testPurpose;
-          existing.external_lab_id = externalLabId;
           existing.ekn = isEknMode ? ekn : '';
           existing.sync_status = 'local';
           existing.updated_at = now;
           this.plugin.requestsDb.update(existing.id, existing);
 
           // Добавление методов: каждая под-заявка наследует поля и получает тот же NNN
-          // (сервер переиспользует номер родителя, пока он в статусе new).
-          const addedIds = Array.from(methodsDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked:not(:disabled)'))
-            .map(cb => Number(cb.value)).filter(v => v > 0);
+          // (сервер переиспользует номер родителя, пока он в статусе new). Чекбоксы
+          // «добавить методы» живут в addDiv (не methodsDiv — там текущий метод,
+          // все чекбоксы disabled).
+          const addedPairs = Array.from(addDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
+            .map(cb => cb.value.split(':').map(Number))
+            .filter(([mid, lid]) => mid > 0 && lid > 0);
           let addedCount = 0;
-          if (addedIds.length > 0) {
-            addedIds.forEach((mid, i) => {
+          if (addedPairs.length > 0) {
+            addedPairs.forEach(([mid, lid], i) => {
               const draft: LabRequest = {
                 id: -(Date.now() + i),
                 number_seq: 0,
@@ -971,10 +961,10 @@ export class RequestsView extends ItemView {
                 status: 'new',
                 priority,
                 test_purpose: testPurpose,
-                external_lab_id: externalLabId,
                 ekn: isEknMode ? ekn : '',
                 external_id: '',
                 method_id: mid,
+                lab_id: lid,
                 customer_number: '',
                 lab_number: '',
                 files: [],
@@ -1011,27 +1001,27 @@ export class RequestsView extends ItemView {
             status: 'new',
             priority,
             test_purpose: testPurpose,
-            external_lab_id: externalLabId,
             ekn: isEknMode ? ekn : '',
             files: [],
             created_at: now,
             updated_at: now,
             sync_status: 'local',
           };
-          methodIds.forEach((mid, i) => {
+          methodLabPairs.forEach(([mid, lid], i) => {
             const newReq: LabRequest = {
               ...(base as LabRequest),
               id: i === 0 ? Date.now() + Math.floor(Math.random() * 1000) : -(Date.now() + i),
               method_id: mid,
+              lab_id: lid,
               customer_number: '',
               lab_number: '',
-              group_key: methodIds.length > 1 ? groupKey : undefined,
+              group_key: methodLabPairs.length > 1 ? groupKey : undefined,
             };
             this.plugin.requestsDb.add(newReq);
           });
           await this.plugin.requestsDb.save();
-          new Notice(methodIds.length > 1
-            ? `Заявка создана как ${methodIds.length} под-заявки (по методу), будут отправлены при синхронизации`
+          new Notice(methodLabPairs.length > 1
+            ? `Заявка создана как ${methodLabPairs.length} под-заявки (по методу), будут отправлены при синхронизации`
             : 'Заявка создана (будет отправлена при синхронизации)');
           this.renderView();
         }
@@ -1072,7 +1062,7 @@ export class RequestsView extends ItemView {
     const checked: number[] = [];
     for (const src of [methodsDiv, addDiv]) {
       for (const cb of Array.from(src.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))) {
-        checked.push(Number(cb.value));
+        checked.push(Number(cb.value.split(':')[0]));
       }
     }
     const indicators = this.indicatorsForMethods(checked);
@@ -1343,7 +1333,7 @@ export class RequestsView extends ItemView {
     container: HTMLElement,
     title: string,
     kind: 'lab' | 'method' | 'object',
-    items: Array<{ id: number; code?: string; name: string; lab_id?: number; description?: string }>,
+    items: Array<{ id: number; code?: string; name: string; lab_ids?: number[]; description?: string }>,
   ): void {
     const section = container.createDiv({ cls: 'tn-req-mb12' });
     section.createDiv({ cls: 'tn-req-meta tn-req-mb4' }).setText(title);
@@ -1367,8 +1357,10 @@ export class RequestsView extends ItemView {
       row.createEl('td').setText(it.code || '—');
       row.createEl('td').setText(it.name || '—');
       if (kind === 'method') {
-        const lab = this.plugin.requestsDb.getLabs().find(l => l.id === it.lab_id);
-        row.createEl('td').setText(lab ? lab.code : '—');
+        const labs = (it.lab_ids || [])
+          .map(id => this.plugin.requestsDb.getLabs().find(l => l.id === id)?.code)
+          .filter((code): code is string => !!code);
+        row.createEl('td').setText(labs.length > 0 ? labs.join(', ') : '—');
       }
       row.createEl('td').setText(it.description || '—');
     }

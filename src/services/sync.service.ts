@@ -81,11 +81,11 @@ export class RequestsSyncService {
       status: r.status,
       priority: r.priority,
       test_purpose: r.test_purpose,
-      external_lab_id: r.external_lab_id,
       ekn: r.ekn,
       external_id: r.external_id || '',
       updated_at: r.updated_at,
       method_id: r.method_id,
+      lab_id: r.lab_id,
     }));
     const res = await this.request({
       url: `${this.baseUrl}/api/lab/sync/push`,
