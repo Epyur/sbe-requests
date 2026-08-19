@@ -1,4 +1,4 @@
-import { ItemView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
+import { FileSystemAdapter, ItemView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type SbeRequestsPlugin from '../main';
 import type { LabProject, LabRequest } from '../types/requests';
 import { getService } from '../../../sbe-core/src/bridge';
@@ -13,6 +13,11 @@ const STATUS_LABELS: Record<string, string> = {
   processing: '🟡 В работе',
   completed: '✅ Завершена',
 };
+
+/** Расширения, которые Obsidian открывает встроенным просмотрщиком (как в sbe-documents). */
+const OBSIDIAN_VIEWABLE = new Set([
+  'md', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'txt', 'csv', 'html', 'htm',
+]);
 
 /** Ключи разделов дерева навигации (фасад, как в sbe-lims). */
 type NavKey = 'requests' | 'groups' | 'references';
@@ -247,13 +252,13 @@ export class RequestsView extends ItemView {
     }
   }
 
-  /** Роль editor/admin — можно создавать/редактировать заявки и справочники. */
+  /** Роль editor/admin/superadmin — можно создавать/редактировать заявки и справочники. */
   private get canEdit(): boolean {
-    return this.myRole === 'editor' || this.myRole === 'admin';
+    return this.myRole === 'editor' || this.myRole === 'admin' || this.myRole === 'superadmin';
   }
 
   private get isAdmin(): boolean {
-    return this.myRole === 'admin';
+    return this.myRole === 'admin' || this.myRole === 'superadmin';
   }
 
   private renderView(): void {
@@ -466,7 +471,12 @@ export class RequestsView extends ItemView {
       filesDiv.createDiv({ cls: 'tn-req-meta', text: `Файлы (${req.files.length}):` });
       for (const f of req.files) {
         const row = filesDiv.createEl('div', { cls: 'tn-req-meta' });
-        row.createEl('a', { href: f.file_url, attr: { target: '_blank' } }).setText(`📎 ${f.file_name}`);
+        const link = row.createEl('a', { attr: { href: '#' } });
+        link.setText(`📎 ${f.file_name}`);
+        link.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          void this.downloadAndOpen(f.file_key, f.file_name);
+        });
       }
     }
 
@@ -491,6 +501,11 @@ export class RequestsView extends ItemView {
         }
       });
     }
+
+    // ---- Скачивание и открытие файлов заявки ----
+    // Бакет sbe-doc приватный — прямой file_url недоступен из браузера/Electron
+    // (ошибка доступа к S3); файл скачивается через JWT-проксирующий эндпоинт
+    // сервиса, сохраняется в вольт и открывается оттуда (как в sbe-documents).
 
     const btnRow = container.createDiv({ cls: 'tn-req-header tn-req-mt12' });
 
@@ -558,6 +573,56 @@ export class RequestsView extends ItemView {
       customer: `${this.projectCode(req.project_id)}-${seq}/${year}-${labCode}-${m.code}`,
       lab: `${seq}/${year}-${m.code}`,
     };
+  }
+
+  // ---- Скачивание и открытие файлов ----
+
+  /** Скачивает файл из S3 через сервис, сохраняет в хранилище вольта и открывает. */
+  private async downloadAndOpen(fileKey: string, fileName: string): Promise<void> {
+    try {
+      const data = await this.plugin.syncService.downloadFile(fileKey);
+      const dir = 'yourbase/sbe_requests/files';
+      const adapter = this.app.vault.adapter;
+      if (!(await adapter.exists(dir))) {
+        await adapter.mkdir(dir);
+      }
+      const safeName = this.sanitizeFileName(fileName);
+      const path = `${dir}/${safeName}`;
+      await adapter.writeBinary(path, data);
+      new Notice(`Файл «${safeName}» скачан в хранилище`);
+      await this.openLocalFile(path, fileName);
+    } catch (e: unknown) {
+      new Notice(`Ошибка скачивания файла: ${errorMessage(e)}`);
+    }
+  }
+
+  /** Открывает локальный файл: Obsidian (встроенные типы) или системное приложение. */
+  private async openLocalFile(path: string, fileName: string): Promise<void> {
+    const ext = (fileName.split('.').pop() || '').toLowerCase();
+    if (OBSIDIAN_VIEWABLE.has(ext)) {
+      await this.app.workspace.openLinkText(path, '');
+      return;
+    }
+    try {
+      const adapter = this.app.vault.adapter;
+      if (!(adapter instanceof FileSystemAdapter)) {
+        new Notice(`Файл сохранён: ${path}`);
+        return;
+      }
+      const fullPath = adapter.getFullPath(path);
+      const { shell } = require('electron');
+      const err = await shell.openPath(fullPath);
+      if (err) {
+        new Notice(`Не удалось открыть системным приложением: ${err}`);
+      }
+    } catch (e: unknown) {
+      new Notice(`Файл сохранён: ${path} (${errorMessage(e)})`);
+    }
+  }
+
+  private sanitizeFileName(name: string): string {
+    const cleaned = (name || 'file').replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').trim();
+    return cleaned || 'file';
   }
 
   private priorityLabel(priority: string): string {

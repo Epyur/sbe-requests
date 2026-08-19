@@ -51,6 +51,51 @@ SBE-плагин «Заявки на испытания»: локальная Б
 
 ## История работ
 
+### 2026-08-19 — v0.1.10 (фикс: кнопка «Создать» пропадала для superadmin)
+- **Найдено пользователем**: кнопка «＋ Создать» (и ряд других editor-гейтов — файлы,
+  смена статуса, создание групп, правка проектов) пропала из UI. Причина: геттеры
+  `canEdit`/`isAdmin` (`requests-view.ts`) проверяли только `this.myRole === 'editor'`/
+  `'admin'` — роль `superadmin` (введена позже, в этой же сессии) туда не попала;
+  `settings-tab.ts` тогда поправили, а этот файл пропустили. Владелец приложения
+  (всегда `superadmin` после `seedOwner`) в итоге не проходил ни одну editor/admin
+  проверку в интерфейсе заявок.
+- Правка: `canEdit` → `+ this.myRole === 'superadmin'`; `isAdmin` → то же. Проверено
+  грепом по всему `src/` — больше нет пропущенных `=== 'admin'`/`!== 'admin'` сравнений
+  (только в `settings-tab.ts`, уже корректных).
+- Задокументировано в `docs/superpowers/plans/2026-08-19-sbe-lims-requests-followup-plan.md`
+  (п.1) вместе с тремя связанными находками в sbe-lims.
+- `npx tsc --noEmit` EXIT=0; `npm run build` OK. Версия 0.1.9 → **0.1.10**.
+
+### 2026-08-19 — v0.1.9 (файлы заявки: скачивание через сервис вместо прямого S3-URL)
+- **Найдено пользователем**: клик по вложенному файлу заявки открывал `file_url`
+  (прямой S3-адрес) в браузере/новой вкладке → ошибка доступа к S3. Причина: бакет
+  `sbe-doc` приватный, прямой URL без подписи/авторизации не читается снаружи сервиса.
+  Тот же класс бага уже был найден и исправлен раньше в `sbe-documents` (см. его
+  AGENTS.md) — тот же фикс применён здесь.
+- `services/sync.service.ts`: `request()` теперь возвращает `arrayBuffer` (наряду с
+  `status`/`text`); новый `downloadFile(fileKey)` — `GET /api/lab/file?key=...` с JWT
+  (сервер сам читает S3 своими учётными данными и отдаёт байты, см.
+  `lab-service/files.go handleDownloadFile` — уже существовал, ничего на сервере
+  менять не пришлось).
+- `ui/requests-view.ts`: клик по файлу больше не `<a href={file_url} target=_blank>`,
+  а `downloadAndOpen(file_key, file_name)` — скачивает через сервис, сохраняет в
+  `yourbase/sbe_requests/files/` (`adapter.writeBinary`), затем открывает: файлы
+  Obsidian-совместимых типов (md/pdf/картинки/txt/csv/html) — `workspace.openLinkText`,
+  остальные (docx и т.п.) — системным приложением (`require('electron').shell.openPath`,
+  как в `sbe-documents`/`sbe-mailer`). Добавлены `OBSIDIAN_VIEWABLE`, `openLocalFile`,
+  `sanitizeFileName` (тот же список расширений и логика, что в `sbe-documents`).
+- `esbuild.config.mjs`: `external` дополнен `'electron'` (иначе `require('electron')`
+  не резолвится в собранном `main.js`) — тот же фикс, что раньше в `sbe-mailer`.
+- ⚠️ **sbe-lims потенциально подвержен тому же классу бага**: `LimsRequest.files`
+  содержит `file_url`, но нигде в `lims-view.ts` не рендерится — активной инстанции
+  ошибки сейчас нет (нет UI, который бы открывал файл заявки), но если/когда список
+  файлов там появится, использовать тот же паттерн (`downloadFile`/`downloadAndOpen`
+  через `GET /api/lab/file?key=`), а не `file_url` напрямую.
+- `npx tsc --noEmit` EXIT=0; `npm run build` OK (main.js/main.js.map без битых
+  байт — при правке через shell-скрипт один заход случайно записал сырые
+  control-байты вместо текста экранирования `\x00-\x1f` в regex, найдено и
+  исправлено до коммита проверкой на NUL-байты). Версия 0.1.8 → **0.1.9**.
+
 ### 2026-08-19 — v0.1.8 (метод → несколько лабораторий; выбор лабы при создании заявки)
 - **По требованию пользователя**: метод теперь может принадлежать нескольким
   лабораториям (сервер: `method_labs`, many-to-many — см. `lab-service/AGENTS.md`).

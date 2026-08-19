@@ -332,6 +332,20 @@ export class RequestsSyncService {
     this.assertOk(res);
   }
 
+  /** Скачивает файл из S3 через сервис (GET /api/lab/file?key=...) — бакет sbe-doc
+   * приватный, прямой file_url из ответа сервера недоступен из браузера/Electron
+   * напрямую (см. sbe-documents/AGENTS.md, тот же фикс). */
+  async downloadFile(fileKey: string): Promise<ArrayBuffer> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/lab/file?key=${encodeURIComponent(fileKey)}`,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    }, 120000);
+    this.assertOk(res);
+    return res.arrayBuffer;
+  }
+
   /** Загружает файл заявки в S3 через сервис. Возвращает file_key/file_url. */
   async uploadFile(data: ArrayBuffer, fileName: string, requestId: number): Promise<UploadFileResponse> {
     const token = await this.getToken();
@@ -395,7 +409,7 @@ export class RequestsSyncService {
   private async request(
     param: RequestUrlParam,
     timeoutMs = 30000,
-  ): Promise<{ status: number; text: string }> {
+  ): Promise<{ status: number; text: string; arrayBuffer: ArrayBuffer }> {
     let timer: number | undefined;
     try {
       const response = await Promise.race([
@@ -407,7 +421,7 @@ export class RequestsSyncService {
           );
         }),
       ]);
-      return { status: response.status, text: response.text };
+      return { status: response.status, text: response.text, arrayBuffer: response.arrayBuffer };
     } finally {
       if (timer !== undefined) window.clearTimeout(timer);
     }

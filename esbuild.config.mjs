@@ -33,7 +33,7 @@ const ctx = await esbuild.context({
   platform: 'browser',
   format: 'cjs',
   target: 'es2021',
-  external: ['obsidian'],
+  external: ['obsidian', 'electron'],
   sourcemap: prod ? false : 'inline',
   minify: prod,
   logLevel: 'info',
