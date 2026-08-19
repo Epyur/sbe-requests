@@ -16,9 +16,9 @@ SBE-плагин «Заявки на испытания». Клиент lab-serv
 | POST | `/projects` | editor | `{parent_id,code,name,description,is_ekn,group_id}` → `{id}`; 409 code exists; 400 group not found |
 | PATCH | `/projects/{id}` | editor+/владелец | `{parent_id,code,name,description,is_ekn,group_id}` → `{ok}` (0 = «отвязать» группу) |
 | GET | `/requests` | viewer | `{"requests":[...]}` (только видимые) |
-| POST | `/requests` | editor | `{title,description,object_id,project_id,group_id,priority,test_purpose,external_lab_id,ekn,method_ids}` → `{request}`; при `ekn` без проекта — автопроект (code=ekn) |
+| POST | `/requests` | editor | `{title,description,object_id,project_id,group_id,priority,test_purpose,external_lab_id,ekn,external_id,method_ids}` → `{request}`; при `ekn` без проекта — автопроект (code=ekn) |
 | GET | `/requests/{id}` | viewer (видимость) | `{"request":{...}}`; 403 если не видно |
-| PATCH | `/requests/{id}` | editor+/владелец | `{title,description,object_id,project_id,group_id,priority,test_purpose,external_lab_id,ekn,method_ids}` → `{request}` |
+| PATCH | `/requests/{id}` | editor+/владелец | `{title,description,object_id,project_id,group_id,priority,test_purpose,external_lab_id,ekn,external_id,method_ids}` → `{request}` |
 | POST | `/requests/{id}/status` | editor | `{status}` (new/processing/completed) → `{ok}` |
 | GET | `/groups` | viewer | `{"groups":[...]}` (мои + где участник) |
 | POST | `/groups` | editor | `{name}` → `{id}` |
@@ -56,6 +56,8 @@ LabRequest{ id, number_seq, number_year, title, description, object_id, project_
             priority: 'normal'|'critical'|'blocker',
             test_purpose: ''|'quality_control'|'rnd'|'certification'|'declaration',
             external_lab_id: number, ekn: string,
+            external_id: string,  // номер legacy email-трекера («LPIZAYAVKINAPRO-<N>»);
+                                   // у новых заявок пусто, только для миграции
             method_id: number, customer_number: string, lab_number: string,
             group_key?: string,   // только у локальных новых под-заявок одного создания
             parent_id?: number,   // только у локальных черновиков «добавление метода»
@@ -75,7 +77,7 @@ LabRequest{ id, number_seq, number_year, title, description, object_id, project_
 
 PushRequest (тело `POST /sync/push`, заявки): `{id, client_id, group_key, parent_id, title,
 description, object_id, project_id, group_id, status, priority, test_purpose,
-external_lab_id, ekn, updated_at, method_id}`. `id=0` — новая заявка: без `parent_id` сервер
+external_lab_id, ekn, external_id, updated_at, method_id}`. `id=0` — новая заявка: без `parent_id` сервер
 присваивает NNN (под-заявки с одинаковым `group_key` получают один NNN); с `parent_id` —
 **под-заявка делит NNN родителя** (только родитель в статусе `new`, владелец/admin; иначе —
 новый NNN). Ответ `{inserted, updated, created:[{client_id, group_key, request}]}` — клиент

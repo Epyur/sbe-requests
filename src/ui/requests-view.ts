@@ -973,6 +973,7 @@ export class RequestsView extends ItemView {
                 test_purpose: testPurpose,
                 external_lab_id: externalLabId,
                 ekn: isEknMode ? ekn : '',
+                external_id: '',
                 method_id: mid,
                 customer_number: '',
                 lab_number: '',
