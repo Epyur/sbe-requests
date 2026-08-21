@@ -14,6 +14,10 @@ const STATUS_LABELS: Record<string, string> = {
   completed: '✅ Завершена',
 };
 
+/** Префикс legacy-номера трекера почты (LIMS_LPI); requests.external_id хранит
+ * только числовую часть — префикс восстанавливается для отображения. */
+const EXTERNAL_ID_PREFIX = 'LPIZAYAVKINAPRO-';
+
 /** Расширения, которые Obsidian открывает встроенным просмотрщиком (как в sbe-documents). */
 const OBSIDIAN_VIEWABLE = new Set([
   'md', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'txt', 'csv', 'html', 'htm',
@@ -77,6 +81,10 @@ export class RequestsView extends ItemView {
   private searchTimeout: number | null = null;
   /** null — фильтр выключен (все заявки); 0 — только «Без проекта»; >0 — конкретный проект. */
   private selectedProjectId: number | null = null;
+  /** Фильтр по объекту (переход из справочника «Объекты») — нужен из-за
+   * объединения дублей объектов, 2026-08-21: у одного объекта может быть
+   * много заявок. null — фильтр выключен. */
+  private selectedObjectId: number | null = null;
   private myRole = '';
   private myEmail = '';
 
@@ -265,6 +273,16 @@ export class RequestsView extends ItemView {
     const container = this.bodyEl;
     container.empty();
 
+    if (this.selectedObjectId !== null) {
+      const banner = container.createDiv({ cls: 'tn-req-meta tn-req-mb8' });
+      banner.setText(`Показаны только заявки объекта «${this.objectName(this.selectedObjectId)}» `);
+      const clearBtn = banner.createEl('button', { text: '✖ Сбросить', cls: 'tn-btn tn-btn-ghost tn-req-btn-sm' });
+      clearBtn.addEventListener('click', () => {
+        this.selectedObjectId = null;
+        this.renderView();
+      });
+    }
+
     const searchInput = container.createEl('input', {
       attr: { type: 'text', placeholder: '🔍 Поиск по названию...' },
       cls: 'tn-req-input tn-req-mb8',
@@ -378,6 +396,9 @@ export class RequestsView extends ItemView {
     } else if (this.selectedProjectId !== null) {
       requests = requests.filter(r => r.project_id === this.selectedProjectId);
     }
+    if (this.selectedObjectId !== null) {
+      requests = requests.filter(r => r.object_id === this.selectedObjectId);
+    }
     return requests;
   }
 
@@ -427,6 +448,7 @@ export class RequestsView extends ItemView {
     meta.createDiv({ text: `👥 Группа: ${this.groupName(req.group_id)}` });
     meta.createDiv({ text: `🔬 Объект: ${this.objectName(req.object_id)}` });
     if (req.ekn) meta.createDiv({ text: `🔢 ЕКН: ${req.ekn}` });
+    if (req.external_id) meta.createDiv({ text: `📧 Внешний идентификатор: ${EXTERNAL_ID_PREFIX}${req.external_id}` });
     const obj = this.plugin.requestsDb.getObjects().find(o => o.id === req.object_id);
     const chars = obj?.characteristics;
     if (chars) {
@@ -1409,11 +1431,12 @@ export class RequestsView extends ItemView {
     hr.createEl('th').setText('Название');
     if (kind === 'method') hr.createEl('th').setText('Лаборатория');
     hr.createEl('th').setText('Описание');
+    if (kind === 'object') hr.createEl('th').setText('');
     const tbody = table.createEl('tbody');
     if (items.length === 0) {
       const row = tbody.createEl('tr');
       const td = row.createEl('td', { cls: 'tn-req-p24' });
-      td.setAttr('colspan', kind === 'method' ? '4' : '3');
+      td.setAttr('colspan', kind === 'method' ? '4' : kind === 'object' ? '4' : '3');
       td.setText('Пусто');
       return;
     }
@@ -1428,7 +1451,22 @@ export class RequestsView extends ItemView {
         row.createEl('td').setText(labs.length > 0 ? labs.join(', ') : '—');
       }
       row.createEl('td').setText(it.description || '—');
+      if (kind === 'object') {
+        const actions = row.createEl('td');
+        const linkBtn = actions.createEl('button', { text: '→ Заявки', cls: 'tn-btn tn-btn-ghost tn-req-btn-sm' });
+        linkBtn.addEventListener('click', () => this.showRequestsForObject(it.id));
+      }
     }
+  }
+
+  /** Переход из справочника «Объекты» к заявкам конкретного объекта — нужен
+   * из-за объединения дублей объектов в справочнике (2026-08-21): у одного
+   * объекта может быть много заявок, иначе не отличить, какая к нему относится. */
+  private showRequestsForObject(objectId: number): void {
+    this.selectedObjectId = objectId;
+    this.key = 'requests';
+    this.syncNavActive();
+    void this.renderPage();
   }
 
   private showCreateObjectForm(): void {
