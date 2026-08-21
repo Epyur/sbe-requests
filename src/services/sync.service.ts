@@ -199,6 +199,19 @@ export class RequestsSyncService {
     }
   }
 
+  /** Сохраняет в справочнике ЕКН карточку продукта, не найденного там на
+   * момент оформления заявки (данные, введённые заказчиком вручную) — чтобы
+   * при следующей заявке с тем же ЕКН название подставлялось автоматически.
+   * Не блокирует сохранение заявки при ошибке (та же логика, что getEknProduct). */
+  async saveManualEknProduct(ekn: string, name: string, thickness: string): Promise<void> {
+    try {
+      const eknService = await getService('sbe-ekn');
+      await eknService.setManualProduct(ekn, name, thickness);
+    } catch (e: unknown) {
+      console.warn('Заявки: не удалось сохранить ручную карточку ЕКН в sbe-ekn:', errorMessage(e));
+    }
+  }
+
   /** Создаёт проект/подпроект (editor). Возвращает id. */
   async createProject(data: { parent_id: number; code: string; name: string; description: string; is_ekn: boolean; group_id: number }): Promise<number> {
     const token = await this.getToken();

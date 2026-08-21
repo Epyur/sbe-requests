@@ -1,6 +1,6 @@
 import { FileSystemAdapter, ItemView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type SbeRequestsPlugin from '../main';
-import type { LabProject, LabRequest } from '../types/requests';
+import type { LabProject, LabRequest, ObjectCharacteristics } from '../types/requests';
 import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { REQUESTS_HELP_MD, REQUESTS_HELP_PATH } from './help';
@@ -737,18 +737,12 @@ export class RequestsView extends ItemView {
     const eknLabel = objectSection.createEl('label', { text: 'ЕКН (серийная продукция)', cls: 'tn-req-label' });
     const eknInput = objectSection.createEl('input', { attr: { type: 'text', placeholder: 'Номер ЕКН (например, 068863). Оставьте пустым для экспериментального образца.' }, cls: 'tn-req-input' });
     const eknHints = objectSection.createDiv({ cls: 'tn-req-ekn-hints' });
+    // Статус поиска по полному номеру: "найдено в справочнике" или "неизвестный
+    // продукт" — общий элемент и для подсказок, и для точного 6-значного лукапа.
     const eknSnapshot = objectSection.createDiv({ cls: 'tn-req-ekn-snapshot tn-req-meta tn-req-mb8' });
 
     const batchLabel = objectSection.createEl('label', { text: 'Номер партии (обязателен при ЕКН)', cls: 'tn-req-label' });
     const batchInput = objectSection.createEl('input', { attr: { type: 'number', min: '0', step: '1' }, cls: 'tn-req-input tn-req-mb8' });
-
-    // Если по ЕКН нет данных в ПИМ — заказчик заполняет название и целевые характеристики сам
-    const eknManualLabel = objectSection.createEl('label', { text: 'Данные по ЕКН не найдены в справочнике. Укажите название и целевые характеристики материала:', cls: 'tn-req-label tn-req-mb4' });
-    const eknManualDiv = objectSection.createDiv();
-    const eknNameLabel = eknManualDiv.createEl('label', { text: 'Название материала', cls: 'tn-req-label' });
-    const eknNameInput = eknManualDiv.createEl('input', { attr: { type: 'text' }, cls: 'tn-req-input' });
-    const eknTargetLabel = eknManualDiv.createEl('label', { text: 'Целевые характеристики', cls: 'tn-req-label' });
-    const eknTargetInput = eknManualDiv.createEl('textarea', { cls: 'tn-req-textarea tn-req-mb8' });
 
     const expLabel = objectSection.createEl('label', { text: 'Экспериментальный образец (без ЕКН)', cls: 'tn-req-label tn-req-mb4' });
     const expDiv = objectSection.createDiv();
@@ -769,23 +763,30 @@ export class RequestsView extends ItemView {
     const existingObj = existing ? this.plugin.requestsDb.getObjects().find(o => o.id === existing.object_id) : null;
     const existingChars = existingObj?.characteristics || {};
 
-    // Наполнение из существующей заявки
+    // Наполнение из существующей заявки. «Название материала»/«Толщина»/
+    // «Целевой показатель» — общие поля для ЕКН и экспериментального образца
+    // (2026-08-21: раньше при ЕКН было отдельное продублированное поле
+    // названия, которое пропадало вместе с остальным блоком при вводе ЕКН —
+    // теперь общий expDiv не скрывается целиком, меняются только подписи/
+    // видимость «Идентификатора образца» и номера партии).
     const existingIsEkn = !!existingChars.ekn || !!existing?.ekn;
     if (existingIsEkn) {
       eknInput.value = existing?.ekn || existingChars.ekn || '';
       if (existingChars.batch_number !== undefined) batchInput.value = String(existingChars.batch_number);
-      expDiv.hide();
+      if (existingObj) expNameInput.value = existingObj.name;
+      if (existingChars.thickness_mm) expThickInput.value = existingChars.thickness_mm;
+      if (existingChars.target_indicator) expTargetInput.value = existingChars.target_indicator;
+      expTypeSelect.value = 'series';
+      expLabel.hide();
+      expIdLabel.hide();
+      expIdInput.hide();
+      batchLabel.show();
+      batchInput.show();
       const snap = existingChars.ekn_snapshot;
       if (snap && snap.name) {
-        eknSnapshot.setText(`📄 ${snap.name}${snap.thickness ? ' · ' + snap.thickness : ''}${snap.sto_number ? ' · ' + snap.sto_number : ''}`);
-        eknManualLabel.hide();
-        eknManualDiv.hide();
+        eknSnapshot.setText(`📄 Найдено в справочнике: ${snap.name}${snap.thickness ? ' · ' + snap.thickness : ''}${snap.sto_number ? ' · ' + snap.sto_number : ''}`);
       } else {
-        eknSnapshot.setText('Данные по ЕКН не загружены из справочника');
-        if (existingObj) eknNameInput.value = existingObj.name;
-        if (existingChars.target_indicator) eknTargetInput.value = existingChars.target_indicator;
-        eknManualLabel.show();
-        eknManualDiv.show();
+        eknSnapshot.setText('⚠️ Неизвестный продукт, введите название');
       }
     } else {
       if (existingObj) expNameInput.value = existingObj.name;
@@ -795,24 +796,36 @@ export class RequestsView extends ItemView {
       if (existingChars.target_indicator) expTargetInput.value = existingChars.target_indicator;
       batchLabel.hide();
       batchInput.hide();
-      eknManualLabel.hide();
-      eknManualDiv.hide();
     }
 
-    // Поиск ЕКН через sbe-ekn (подсказки)
+    // Поиск ЕКН через sbe-ekn: подсказки по частичному совпадению + точный
+    // лукап при полном 6-значном номере — автозаполнение названия/толщины,
+    // либо «Неизвестный продукт» и самостоятельный ввод (2026-08-21).
     let eknTimer: number | null = null;
+    let lastEknSnapshot: ObjectCharacteristics['ekn_snapshot'] | null = null;
     eknInput.addEventListener('input', () => {
       const q = eknInput.value.trim();
       eknHints.empty();
       eknSnapshot.setText('');
+      lastEknSnapshot = null;
       if (q) {
-        expDiv.hide();
+        // Название материала/толщина/целевой показатель остаются на месте —
+        // пропадает только надпись «Экспериментальный образец (без ЕКН)» и
+        // «Идентификатор образца» (не применим к серийной продукции); тип
+        // объекта переключается на серийный автоматически.
+        expLabel.hide();
+        expIdLabel.hide();
+        expIdInput.hide();
         batchLabel.show();
         batchInput.show();
+        expTypeSelect.value = 'series';
       } else {
-        expDiv.show();
+        expLabel.show();
+        expIdLabel.show();
+        expIdInput.show();
         batchLabel.hide();
         batchInput.hide();
+        expTypeSelect.value = 'experimental';
       }
       if (eknTimer) window.clearTimeout(eknTimer);
       eknTimer = window.setTimeout(() => {
@@ -820,14 +833,17 @@ export class RequestsView extends ItemView {
         void this.searchEkn(q, eknHints, (product) => {
           eknInput.value = product.ekn;
           eknHints.empty();
-          eknSnapshot.setText(`📄 ${product.name}${product.thickness ? ' · ' + product.thickness : ''}${product.sto_number ? ' · ' + product.sto_number : ''}`);
-          expDiv.hide();
-          batchLabel.show();
-          batchInput.show();
-          eknManualLabel.hide();
-          eknManualDiv.hide();
+          expNameInput.value = product.name;
+          if (product.thickness) expThickInput.value = product.thickness;
+          eknSnapshot.setText(`📄 Найдено в справочнике: ${product.name}${product.thickness ? ' · ' + product.thickness : ''}${product.sto_number ? ' · ' + product.sto_number : ''}`);
+          lastEknSnapshot = { name: product.name, thickness: product.thickness, sto_number: product.sto_number, sto_name: product.sto_name };
           new Notice(`ЕКН ${product.ekn}: данные материала загружены из справочника`);
         });
+        if (/^\d{6}$/.test(q)) {
+          void this.lookupEknExact(q, expNameInput, expThickInput, eknSnapshot).then((snap) => {
+            lastEknSnapshot = snap;
+          });
+        }
       }, 400);
     });
 
@@ -957,29 +973,25 @@ export class RequestsView extends ItemView {
           new Notice('Введите номер партии (целое число) — обязателен при ЕКН');
           return;
         }
-        const snapshot = await this.plugin.syncService.getEknProduct(ekn);
-        const manualName = eknNameInput.value.trim();
-        if (!snapshot) {
-          if (!manualName) {
-            new Notice('Данные по ЕКН не найдены в справочнике. Укажите название материала и целевые характеристики.');
-            return;
-          }
-          objectName = manualName;
-          if (!eknTargetInput.value.trim()) {
-            new Notice('Укажите целевые характеристики материала');
-            return;
-          }
-        } else {
-          objectName = snapshot.name || `ЕКН ${ekn}`;
+        const materialName = expNameInput.value.trim();
+        if (!materialName) { new Notice('Введите название материала'); return; }
+        if (!lastEknSnapshot) {
+          // Продукт не найден в справочнике при вводе — заказчик указал данные
+          // сам; сохраняем их в справочнике ЕКН для последующих заявок с этим
+          // же номером (см. sync.service.saveManualEknProduct).
+          if (!expThickInput.value.trim()) { new Notice('Укажите толщину образца'); return; }
+          if (!expTargetInput.value.trim()) { new Notice('Укажите целевой показатель'); return; }
+          await this.plugin.syncService.saveManualEknProduct(ekn, materialName, expThickInput.value.trim());
         }
+        objectName = materialName;
         const characteristics: Record<string, unknown> = {
           ekn,
           batch_number: Number(batchStr),
           sample_type: 'series',
         };
-        if (snapshot) characteristics.ekn_snapshot = snapshot;
-        if (manualName) characteristics.name_manual = manualName;
-        if (eknTargetInput.value.trim()) characteristics.target_indicator = eknTargetInput.value.trim();
+        if (lastEknSnapshot) characteristics.ekn_snapshot = lastEknSnapshot;
+        if (expThickInput.value.trim()) characteristics.thickness_mm = expThickInput.value.trim();
+        if (expTargetInput.value.trim()) characteristics.target_indicator = expTargetInput.value.trim();
         objectId = await this.plugin.syncService.createObject(objectName, '', characteristics);
       } else {
         const expName = expNameInput.value.trim();
@@ -1142,6 +1154,27 @@ export class RequestsView extends ItemView {
     } catch (e: unknown) {
       console.warn('Заявки: не удалось найти ЕКН в sbe-ekn:', errorMessage(e));
     }
+  }
+
+  /** Точный лукап ЕКН по полному 6-значному номеру: автозаполняет название/
+   * толщину и показывает статус, либо «Неизвестный продукт» — тогда заказчик
+   * вводит данные сам (сохраняются в справочнике при сохранении заявки, см.
+   * saveManualEknProduct). */
+  private async lookupEknExact(
+    ekn: string,
+    nameInput: HTMLInputElement,
+    thickInput: HTMLInputElement,
+    statusEl: HTMLElement,
+  ): Promise<ObjectCharacteristics['ekn_snapshot'] | null> {
+    const snapshot = await this.plugin.syncService.getEknProduct(ekn);
+    if (snapshot) {
+      nameInput.value = snapshot.name || '';
+      if (snapshot.thickness) thickInput.value = snapshot.thickness;
+      statusEl.setText(`📄 Найдено в справочнике: ${snapshot.name}${snapshot.thickness ? ' · ' + snapshot.thickness : ''}${snapshot.sto_number ? ' · ' + snapshot.sto_number : ''}`);
+    } else {
+      statusEl.setText('⚠️ Неизвестный продукт, введите название');
+    }
+    return snapshot;
   }
 
   /** Перерисовывает чекбоксы определяемых показателей по выбранным методам. */
