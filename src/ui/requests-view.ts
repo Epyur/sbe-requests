@@ -18,6 +18,16 @@ const STATUS_LABELS: Record<string, string> = {
  * только числовую часть — префикс восстанавливается для отображения. */
 const EXTERNAL_ID_PREFIX = 'LPIZAYAVKINAPRO-';
 
+/** Код метода → поле группы пожарной классификации в QRC
+ * (groups.fire_characteristics.<field>.value, см. sync.service.getEknProduct) —
+ * чем предзаполняется «Целевой показатель» для методов, где QRC хранит цель
+ * испытания (2026-08-21). Другие методы (МП/КП/КИ) — только ручной выбор. */
+const FIRE_GROUP_FIELD_BY_METHOD_CODE: Record<string, string> = {
+  'ГГ': 'flame_group',
+  'ГВ': 'flammability_gr',
+  'РП': 'flame_spread_gr',
+};
+
 /** Расширения, которые Obsidian открывает встроенным просмотрщиком (как в sbe-documents). */
 const OBSIDIAN_VIEWABLE = new Set([
   'md', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'txt', 'csv', 'html', 'htm',
@@ -481,10 +491,10 @@ export class RequestsView extends ItemView {
       mRow.createEl('td').setText(req.customer_number || '—');
       mRow.createEl('td').setText(req.lab_number || '—');
 
-      const indicators = this.indicatorsForMethods([req.method_id]);
-      if (indicators.length > 0) {
+      const chosenTarget = chars?.target_indicators?.[String(req.method_id)];
+      if (chosenTarget) {
         const indDiv = methodsDiv.createDiv({ cls: 'tn-req-meta tn-req-mt8' });
-        indDiv.setText(`Определяемые показатели: ${indicators.join(', ')}`);
+        indDiv.setText(`🎯 Целевой показатель: ${chosenTarget}`);
       }
     }
 
@@ -671,24 +681,6 @@ export class RequestsView extends ItemView {
     return l ? `${l.code}${l.name ? ' — ' + l.name : ''}` : `#${labId}`;
   }
 
-  /** Объединение определяемых показателей выбранных методов (уникальные). */
-  private indicatorsForMethods(methodIds: number[]): string[] {
-    const methods = this.plugin.requestsDb.getMethods();
-    const out: string[] = [];
-    const seen = new Set<string>();
-    for (const id of methodIds) {
-      const m = methods.find(md => md.id === id);
-      if (m && Array.isArray(m.determinable_indicators)) {
-        for (const ind of m.determinable_indicators) {
-          if (ind && !seen.has(ind)) {
-            seen.add(ind);
-            out.push(ind);
-          }
-        }
-      }
-    }
-    return out;
-  }
 
   // ---- Форма создания/редактирования заявки ----
 
@@ -756,26 +748,42 @@ export class RequestsView extends ItemView {
     const expThickInput = expDiv.createEl('input', { attr: { type: 'text' }, cls: 'tn-req-input' });
     const expIdLabel = expDiv.createEl('label', { text: 'Идентификатор образца', cls: 'tn-req-label' });
     const expIdInput = expDiv.createEl('input', { attr: { type: 'text' }, cls: 'tn-req-input' });
-    const expTargetLabel = expDiv.createEl('label', { text: 'Целевой показатель', cls: 'tn-req-label' });
-    const expTargetInput = expDiv.createEl('textarea', { cls: 'tn-req-textarea' });
 
     // Объект из существующей заявки
     const existingObj = existing ? this.plugin.requestsDb.getObjects().find(o => o.id === existing.object_id) : null;
     const existingChars = existingObj?.characteristics || {};
 
-    // Наполнение из существующей заявки. «Название материала»/«Толщина»/
-    // «Целевой показатель» — общие поля для ЕКН и экспериментального образца
-    // (2026-08-21: раньше при ЕКН было отдельное продублированное поле
-    // названия, которое пропадало вместе с остальным блоком при вводе ЕКН —
-    // теперь общий expDiv не скрывается целиком, меняются только подписи/
-    // видимость «Идентификатора образца» и номера партии).
+    // Целевой показатель по методу (methodId -> значение) — заменяет старое
+    // свободное поле (2026-08-21), см. updateIndicators. Предзаполняем из уже
+    // сохранённых характеристик объекта, если заявка редактируется.
+    // refreshIndicators переопределяется ниже, после того как methodsDiv/
+    // addDiv/indicatorsDiv созданы — объявлена заранее, чтобы её мог вызывать
+    // eknInput 'input' listener (объявлен раньше по тексту функции, но
+    // выполняется только по событию, то есть уже после переопределения).
+    let refreshIndicators: () => void = () => {};
+    const selectedTargets = new Map<number, string>();
+    if (existingChars.target_indicators) {
+      for (const [k, v] of Object.entries(existingChars.target_indicators)) {
+        if (v) selectedTargets.set(Number(k), v);
+      }
+    }
+    // Снимок ЕКН (в т.ч. fire_groups для предзаполнения целевого показателя) —
+    // из уже сохранённых характеристик при редактировании, иначе появится
+    // после ввода/поиска номера (см. eknInput 'input' listener ниже).
+    let lastEknSnapshot: ObjectCharacteristics['ekn_snapshot'] | null = existingChars.ekn_snapshot || null;
+
+    // Наполнение из существующей заявки. «Название материала»/«Толщина» —
+    // общие поля для ЕКН и экспериментального образца (2026-08-21: раньше при
+    // ЕКН было отдельное продублированное поле названия, которое пропадало
+    // вместе с остальным блоком при вводе ЕКН — теперь общий expDiv не
+    // скрывается целиком, меняются только подписи/видимость «Идентификатора
+    // образца» и номера партии).
     const existingIsEkn = !!existingChars.ekn || !!existing?.ekn;
     if (existingIsEkn) {
       eknInput.value = existing?.ekn || existingChars.ekn || '';
       if (existingChars.batch_number !== undefined) batchInput.value = String(existingChars.batch_number);
       if (existingObj) expNameInput.value = existingObj.name;
       if (existingChars.thickness_mm) expThickInput.value = existingChars.thickness_mm;
-      if (existingChars.target_indicator) expTargetInput.value = existingChars.target_indicator;
       expTypeSelect.value = 'series';
       expLabel.hide();
       expIdLabel.hide();
@@ -793,7 +801,6 @@ export class RequestsView extends ItemView {
       expTypeSelect.value = existingChars.sample_type || 'experimental';
       if (existingChars.thickness_mm) expThickInput.value = existingChars.thickness_mm;
       if (existingChars.sample_id) expIdInput.value = existingChars.sample_id;
-      if (existingChars.target_indicator) expTargetInput.value = existingChars.target_indicator;
       batchLabel.hide();
       batchInput.hide();
     }
@@ -802,12 +809,12 @@ export class RequestsView extends ItemView {
     // лукап при полном 6-значном номере — автозаполнение названия/толщины,
     // либо «Неизвестный продукт» и самостоятельный ввод (2026-08-21).
     let eknTimer: number | null = null;
-    let lastEknSnapshot: ObjectCharacteristics['ekn_snapshot'] | null = null;
     eknInput.addEventListener('input', () => {
       const q = eknInput.value.trim();
       eknHints.empty();
       eknSnapshot.setText('');
       lastEknSnapshot = null;
+      refreshIndicators();
       if (q) {
         // Название материала/толщина/целевой показатель остаются на месте —
         // пропадает только надпись «Экспериментальный образец (без ЕКН)» и
@@ -837,11 +844,18 @@ export class RequestsView extends ItemView {
           if (product.thickness) expThickInput.value = product.thickness;
           eknSnapshot.setText(`📄 Найдено в справочнике: ${product.name}${product.thickness ? ' · ' + product.thickness : ''}${product.sto_number ? ' · ' + product.sto_number : ''}`);
           lastEknSnapshot = { name: product.name, thickness: product.thickness, sto_number: product.sto_number, sto_name: product.sto_name };
+          refreshIndicators();
           new Notice(`ЕКН ${product.ekn}: данные материала загружены из справочника`);
+          // Точный лукап поверх подсказки — добавляет fire_groups (нет в
+          // элементе подсказки search()) для предзаполнения целевого показателя.
+          void this.lookupEknExact(product.ekn, expNameInput, expThickInput, eknSnapshot).then((snap) => {
+            if (snap) { lastEknSnapshot = snap; refreshIndicators(); }
+          });
         });
         if (/^\d{6}$/.test(q)) {
           void this.lookupEknExact(q, expNameInput, expThickInput, eknSnapshot).then((snap) => {
             lastEknSnapshot = snap;
+            refreshIndicators();
           });
         }
       }, 400);
@@ -917,7 +931,7 @@ export class RequestsView extends ItemView {
           // Метод+лаба заявки фиксированы: 1 заявка = 1 метод (меняется только созданием новой заявки).
           cb.disabled = true;
         }
-        cb.addEventListener('change', () => this.updateIndicators(methodsDiv, addDiv, indicatorsDiv));
+        cb.addEventListener('change', () => refreshIndicators());
         wrapper.createEl('span').setText(` ${m.code} — ${m.name}`);
       }
     }
@@ -938,7 +952,7 @@ export class RequestsView extends ItemView {
         for (const m of addable) {
           const wrapper = addDiv.createEl('label', { cls: 'tn-req-filter-label' });
           const cb = wrapper.createEl('input', { attr: { type: 'checkbox', value: `${m.id}:${labId}` }, cls: 'tn-req-cb' });
-          cb.addEventListener('change', () => this.updateIndicators(methodsDiv, addDiv, indicatorsDiv));
+          cb.addEventListener('change', () => refreshIndicators());
           wrapper.createEl('span').setText(` ${m.code} — ${m.name}`);
         }
       }
@@ -950,10 +964,14 @@ export class RequestsView extends ItemView {
       addDiv.hide();
     }
 
-    // Определяемые показатели (из выбранных методов)
-    const indicatorsLabel = container.createEl('label', { text: 'Определяемые показатели', cls: 'tn-req-label' });
+    // Целевой показатель — по одному значению на каждый выбранный метод
+    // (2026-08-21: раньше «Определяемые показатели» были информационным
+    // списком без действия; теперь обязательный одиночный выбор, предзаполнен
+    // из ЕКН, если распознан — см. updateIndicators).
+    const indicatorsLabel = container.createEl('label', { text: 'Целевой показатель', cls: 'tn-req-label' });
     const indicatorsDiv = container.createDiv({ cls: 'tn-req-methods tn-req-mb12' });
-    this.updateIndicators(methodsDiv, addDiv, indicatorsDiv);
+    refreshIndicators = () => this.updateIndicators(methodsDiv, addDiv, indicatorsDiv, lastEknSnapshot, selectedTargets);
+    refreshIndicators();
 
     const btnRow = container.createDiv({ cls: 'tn-req-header tn-req-mt12' });
     const saveBtn = btnRow.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });
@@ -963,6 +981,26 @@ export class RequestsView extends ItemView {
     saveBtn.addEventListener('click', async () => {
       const ekn = eknInput.value.trim();
       const isEknMode = !!ekn;
+
+      // Методы и целевые показатели проверяем ДО создания объекта/сохранения
+      // в справочнике ЕКН — иначе при недостающем целевом показателе останется
+      // висящий объект/карточка без заявки (2026-08-21).
+      const methodLabPairs = Array.from(methodsDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
+        .map(cb => cb.value.split(':').map(Number) as [number, number])
+        .filter(([mid, lid]) => mid > 0 && lid > 0);
+      if (methodLabPairs.length === 0) { new Notice('Выберите хотя бы один метод'); return; }
+      const addedPairs = Array.from(addDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
+        .map(cb => cb.value.split(':').map(Number) as [number, number])
+        .filter(([mid, lid]) => mid > 0 && lid > 0);
+
+      const allSelectedMethodIds = Array.from(new Set([...methodLabPairs, ...addedPairs].map(([mid]) => mid)));
+      for (const mid of allSelectedMethodIds) {
+        const m = this.plugin.requestsDb.getMethods().find(md => md.id === mid);
+        if (m && Array.isArray(m.determinable_indicators) && m.determinable_indicators.length > 0 && !selectedTargets.has(mid)) {
+          new Notice(`Выберите целевой показатель для метода «${m.code}»`);
+          return;
+        }
+      }
 
       // Собираем характеристики объекта исследования
       let objectId = 0;
@@ -980,7 +1018,6 @@ export class RequestsView extends ItemView {
           // сам; сохраняем их в справочнике ЕКН для последующих заявок с этим
           // же номером (см. sync.service.saveManualEknProduct).
           if (!expThickInput.value.trim()) { new Notice('Укажите толщину образца'); return; }
-          if (!expTargetInput.value.trim()) { new Notice('Укажите целевой показатель'); return; }
           await this.plugin.syncService.saveManualEknProduct(ekn, materialName, expThickInput.value.trim());
         }
         objectName = materialName;
@@ -991,7 +1028,7 @@ export class RequestsView extends ItemView {
         };
         if (lastEknSnapshot) characteristics.ekn_snapshot = lastEknSnapshot;
         if (expThickInput.value.trim()) characteristics.thickness_mm = expThickInput.value.trim();
-        if (expTargetInput.value.trim()) characteristics.target_indicator = expTargetInput.value.trim();
+        if (selectedTargets.size > 0) characteristics.target_indicators = Object.fromEntries(selectedTargets);
         objectId = await this.plugin.syncService.createObject(objectName, '', characteristics);
       } else {
         const expName = expNameInput.value.trim();
@@ -1004,15 +1041,10 @@ export class RequestsView extends ItemView {
           sample_type: expTypeSelect.value,
         };
         if (expThickInput.value.trim()) characteristics.thickness_mm = expThickInput.value.trim();
-        if (expTargetInput.value.trim()) characteristics.target_indicator = expTargetInput.value.trim();
+        if (selectedTargets.size > 0) characteristics.target_indicators = Object.fromEntries(selectedTargets);
         objectId = await this.plugin.syncService.createObject(objectName, '', characteristics);
       }
       if (objectId <= 0) { new Notice('Не удалось создать объект исследования'); return; }
-
-      const methodLabPairs = Array.from(methodsDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
-        .map(cb => cb.value.split(':').map(Number) as [number, number])
-        .filter(([mid, lid]) => mid > 0 && lid > 0);
-      if (methodLabPairs.length === 0) { new Notice('Выберите хотя бы один метод'); return; }
 
       const priority = prioritySelect.value || 'normal';
       const testPurpose = purposeSelect.value || '';
@@ -1039,10 +1071,8 @@ export class RequestsView extends ItemView {
           // Добавление методов: каждая под-заявка наследует поля и получает тот же NNN
           // (сервер переиспользует номер родителя, пока он в статусе new). Чекбоксы
           // «добавить методы» живут в addDiv (не methodsDiv — там текущий метод,
-          // все чекбоксы disabled).
-          const addedPairs = Array.from(addDiv.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))
-            .map(cb => cb.value.split(':').map(Number))
-            .filter(([mid, lid]) => mid > 0 && lid > 0);
+          // все чекбоксы disabled). addedPairs уже посчитан выше (перед валидацией
+          // целевых показателей).
           let addedCount = 0;
           if (addedPairs.length > 0) {
             addedPairs.forEach(([mid, lid], i) => {
@@ -1178,24 +1208,68 @@ export class RequestsView extends ItemView {
   }
 
   /** Перерисовывает чекбоксы определяемых показателей по выбранным методам. */
-  private updateIndicators(methodsDiv: HTMLElement, addDiv: HTMLElement, indicatorsDiv: HTMLElement): void {
-    const checked: number[] = [];
+  /** «Целевой показатель» — один обязательный выбор на каждый выбранный метод
+   * (2026-08-21, заменяет информационный список «Определяемые показатели»).
+   * Предзаполняется из ekn_snapshot.fire_groups (см. FIRE_GROUP_FIELD_BY_METHOD_CODE),
+   * если распознано и входит в список показателей метода; иначе выбор строго
+   * ручной — selectedTargets мутируется в месте (передаётся по ссылке, читается
+   * при валидации перед сохранением). */
+  private updateIndicators(
+    methodsDiv: HTMLElement,
+    addDiv: HTMLElement,
+    indicatorsDiv: HTMLElement,
+    eknSnapshot: import('../types/requests').ObjectCharacteristics['ekn_snapshot'] | null,
+    selectedTargets: Map<number, string>,
+  ): void {
+    const checkedMethodIds: number[] = [];
     for (const src of [methodsDiv, addDiv]) {
       for (const cb of Array.from(src.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'))) {
-        checked.push(Number(cb.value.split(':')[0]));
+        checkedMethodIds.push(Number(cb.value.split(':')[0]));
       }
     }
-    const indicators = this.indicatorsForMethods(checked);
+    // Забываем цели методов, которые больше не выбраны — иначе при повторном
+    // выборе того же метода позже подставится устаревшее ручное значение.
+    for (const mid of Array.from(selectedTargets.keys())) {
+      if (!checkedMethodIds.includes(mid)) selectedTargets.delete(mid);
+    }
+
     indicatorsDiv.empty();
-    if (indicators.length === 0) {
-      indicatorsDiv.createDiv({ cls: 'tn-req-meta' }).setText('Показатели появятся после выбора методов');
+    if (checkedMethodIds.length === 0) {
+      indicatorsDiv.createDiv({ cls: 'tn-req-meta' }).setText('Целевой показатель появится после выбора методов');
       return;
     }
-    for (const ind of indicators) {
-      const wrapper = indicatorsDiv.createEl('label', { cls: 'tn-req-filter-label' });
-      const cb = wrapper.createEl('input', { attr: { type: 'checkbox', value: ind }, cls: 'tn-req-cb' });
-      cb.checked = true;
-      wrapper.createEl('span').setText(` ${ind}`);
+
+    const methods = this.plugin.requestsDb.getMethods();
+    const fireGroups = eknSnapshot?.fire_groups;
+    const seenMethodIds = new Set<number>();
+    for (const mid of checkedMethodIds) {
+      if (seenMethodIds.has(mid)) continue; // один метод может встретиться и в methodsDiv, и в addDiv
+      seenMethodIds.add(mid);
+      const m = methods.find(md => md.id === mid);
+      if (!m || !Array.isArray(m.determinable_indicators) || m.determinable_indicators.length === 0) continue;
+
+      if (!selectedTargets.has(mid)) {
+        const qrcField = FIRE_GROUP_FIELD_BY_METHOD_CODE[m.code];
+        const autoValue = qrcField ? fireGroups?.[qrcField as keyof typeof fireGroups] : undefined;
+        if (autoValue && m.determinable_indicators.includes(autoValue)) {
+          selectedTargets.set(mid, autoValue);
+        }
+      }
+
+      const groupDiv = indicatorsDiv.createDiv({ cls: 'tn-req-mb8' });
+      groupDiv.createDiv({ cls: 'tn-req-meta tn-req-mb4' }).setText(`${m.code} — целевой показатель:`);
+      for (const ind of m.determinable_indicators) {
+        const wrapper = groupDiv.createEl('label', { cls: 'tn-req-filter-label' });
+        const radio = wrapper.createEl('input', {
+          attr: { type: 'radio', name: `tn-req-target-${mid}`, value: ind },
+          cls: 'tn-req-cb',
+        });
+        radio.checked = selectedTargets.get(mid) === ind;
+        radio.addEventListener('change', () => {
+          if (radio.checked) selectedTargets.set(mid, ind);
+        });
+        wrapper.createEl('span').setText(` ${ind}`);
+      }
     }
   }
 

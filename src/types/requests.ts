@@ -39,14 +39,29 @@ export interface ObjectCharacteristics {
   sample_type?: string;
   /** Толщина образца, мм (без ЕКН). */
   thickness_mm?: string;
-  /** Целевой показатель (без ЕКН). */
+  /** УСТАРЕЛО (2026-08-21) — свободный ввод убран из формы, заменён на
+   * target_indicators (выбор из списка метода, по методу). Оставлено в типе
+   * только для чтения старых заявок/объектов из email_ingest.go, где поле
+   * по-прежнему пишется как aim_indicator из письма. */
   target_indicator?: string;
-  /** Снимок данных из sbe-ekn: {name, thickness, sto_number, sto_name}. */
+  /** Целевой показатель по методу: methodId → одно значение из
+   * method.determinable_indicators (2026-08-21, обязателен при наличии у
+   * метода определяемых показателей — предзаполняется из ekn_snapshot.fire_groups,
+   * если распознано, иначе выбирается пользователем вручную). */
+  target_indicators?: Record<string, string>;
+  /** Снимок данных из sbe-ekn: {name, thickness, sto_number, sto_name} +
+   * группы пожарной классификации из QRC (fire_groups, 2026-08-21) — только
+   * значения, которые реально удалось извлечь (см. sync.service.getEknProduct). */
   ekn_snapshot?: {
     name: string;
     thickness: string;
     sto_number: string;
     sto_name: string;
+    fire_groups?: {
+      flame_group?: string;
+      flammability_gr?: string;
+      flame_spread_gr?: string;
+    };
   };
 }
 

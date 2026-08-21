@@ -9,6 +9,22 @@ export interface SyncResult {
   pulled: number;
 }
 
+/** Читает значение группы пожарной классификации из сырого ответа QRC
+ * (product.data.groups.fire_characteristics.<field>.value) — например
+ * flame_group="Г4" (Группа горючести). Данные из sbe-ekn типизированы как
+ * `unknown` (кросс-плагинная граница), поэтому только безопасный разбор. */
+function readFireGroupValue(data: unknown, field: string): string | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const groups = (data as Record<string, unknown>).groups;
+  if (!groups || typeof groups !== 'object') return undefined;
+  const fire = (groups as Record<string, unknown>).fire_characteristics;
+  if (!fire || typeof fire !== 'object') return undefined;
+  const attr = (fire as Record<string, unknown>)[field];
+  if (!attr || typeof attr !== 'object') return undefined;
+  const value = (attr as Record<string, unknown>).value;
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
 /** Синхронизация с lab-service через JWT из ЦУП. Сервер — канон, локально — кэш. */
 export class RequestsSyncService {
   private db: RequestsDatabase;
@@ -187,11 +203,19 @@ export class RequestsSyncService {
     try {
       const eknService = await getService('sbe-ekn');
       const product = await eknService.getProduct(ekn);
+      const fireGroups: Record<string, string> = {};
+      const flameGroup = readFireGroupValue(product.data, 'flame_group');
+      const flammabilityGr = readFireGroupValue(product.data, 'flammability_gr');
+      const flameSpreadGr = readFireGroupValue(product.data, 'flame_spread_gr');
+      if (flameGroup) fireGroups.flame_group = flameGroup;
+      if (flammabilityGr) fireGroups.flammability_gr = flammabilityGr;
+      if (flameSpreadGr) fireGroups.flame_spread_gr = flameSpreadGr;
       return {
         name: product.name,
         thickness: product.thickness,
         sto_number: product.sto_number,
         sto_name: product.sto_name,
+        ...(Object.keys(fireGroups).length > 0 ? { fire_groups: fireGroups } : {}),
       };
     } catch (e: unknown) {
       console.warn('Заявки: не удалось получить данные ЕКН из sbe-ekn:', errorMessage(e));
