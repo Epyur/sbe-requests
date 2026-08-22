@@ -1,6 +1,6 @@
 import { FileSystemAdapter, ItemView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type SbeRequestsPlugin from '../main';
-import type { LabObject, LabProject, LabRequest, ObjectCharacteristics } from '../types/requests';
+import type { LabObject, LabProject, LabRequest, ObjectCharacteristics, ShortViewSection } from '../types/requests';
 import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { REQUESTS_HELP_MD, REQUESTS_HELP_PATH } from './help';
@@ -436,6 +436,51 @@ export class RequestsView extends ItemView {
 
   // ---- Карточка заявки ----
 
+  /** Короткий вид результатов метода (read-only) — GET .../short-view,
+   * секции сгруппированы на сервере (см. lab-service/protocol.go
+   * handleShortView) тем же кодом, что видит редактор конфигуратора в ЛИМС —
+   * заявки на испытания раньше вообще не показывали результаты метода. */
+  private async renderShortView(container: HTMLElement, requestId: number): Promise<void> {
+    let sections: ShortViewSection[];
+    try {
+      sections = await this.plugin.syncService.getShortView(requestId);
+    } catch (e: unknown) {
+      container.createDiv({ cls: 'tn-req-meta' }).setText(`Ошибка загрузки результатов: ${errorMessage(e)}`);
+      return;
+    }
+    if (sections.length === 0) return;
+    container.createDiv({ cls: 'tn-req-meta tn-req-mb4', text: '📊 Результаты испытания:' });
+    for (const sec of sections) {
+      container.createEl('h5', { text: sec.title });
+      if (sec.table) {
+        const table = container.createEl('table', { cls: 'tn-table' });
+        const thead = table.createEl('thead').createEl('tr');
+        thead.createEl('th').setText('Серия');
+        for (const col of sec.table.columns) thead.createEl('th').setText(col.label);
+        const tbody = table.createEl('tbody');
+        sec.table.rows.forEach((row, i) => {
+          const tr = tbody.createEl('tr');
+          tr.createEl('td').setText(String(i + 1));
+          row.forEach((val, j) => {
+            const td = tr.createEl('td');
+            const col = sec.table!.columns[j];
+            if (col?.is_photo && val) {
+              td.createEl('img', { attr: { src: val, alt: col.label }, cls: 'tn-req-thumb' });
+            } else {
+              td.setText(val);
+            }
+          });
+        });
+      }
+      if (sec.summary) {
+        const ul = container.createEl('ul');
+        for (const row of sec.summary) {
+          ul.createEl('li', { text: `${row.label}: ${row.value}` });
+        }
+      }
+    }
+  }
+
   private renderRequestDetail(req: LabRequest): void {
     const container = this.bodyEl;
     container.empty();
@@ -489,6 +534,13 @@ export class RequestsView extends ItemView {
         const indDiv = methodsDiv.createDiv({ cls: 'tn-req-meta tn-req-mt8' });
         indDiv.setText(`🎯 Целевой показатель: ${chosenTarget}`);
       }
+
+      // Короткий вид результатов (read-only) — тот же группированный вид, что
+      // видит лаборатория в ЛИМС (2026-08-22); раньше заявки вообще не
+      // показывали результаты метода. renderRequestDetail синхронный —
+      // подгружаем отдельно, не блокируя остальной рендер карточки.
+      const shortViewDiv = methodsDiv.createDiv({ cls: 'tn-req-mt8' });
+      void this.renderShortView(shortViewDiv, req.id);
     }
 
     if (req.files && req.files.length > 0) {

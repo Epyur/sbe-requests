@@ -33,7 +33,7 @@ SBE-плагин «Заявки на испытания»: локальная Б
 | `src/services/sync.service.ts` | `RequestsSyncService`: sync/push/pull, создание справочников/проектов/групп, участники, статусы, файлы, permissions/common-access, JWT, multipart, таймауты |
 | `src/ui/requests-view.ts` | `RequestsView`: дерево проектов → заявки, карточка заявки, создание/правка, группы, справочники, файлы, статусы |
 | `src/ui/settings-tab.ts` | Настройки: apiUrl + «Права доступа» (роли viewer/editor/admin + общий доступ) |
-| `src/types/requests.ts` | `LabRequest`, `LabProject`, `LabGroup`, `Lab`, `LabMethod`, `LabObject`, `RequestMethod`, `RequestFile`, `RequestsDbData`, `PullResponse`, `PushResponse`, `UploadFileResponse` |
+| `src/types/requests.ts` | `LabRequest`, `LabProject`, `LabGroup`, `Lab`, `LabMethod`, `LabObject`, `RequestMethod`, `RequestFile`, `RequestsDbData`, `PullResponse`, `PushResponse`, `UploadFileResponse`, `ShortViewSection`/`ShortViewTable`/`ShortViewColumn`/`ShortViewSummaryRow` (2026-08-22, зеркало sbe-lims) |
 | `src/styles.css` | Классы `tn-req-*` на семантических токенах |
 
 ## Настройки (data.json)
@@ -50,6 +50,23 @@ SBE-плагин «Заявки на испытания»: локальная Б
   документацию, подготовить сообщение для коммита и СПРОСИТЬ подтверждение commit/push.**
 
 ## История работ
+
+### 2026-08-22 — v0.1.16 (короткий вид результатов в карточке заявки; announceUpdate)
+- **Карточка заявки раньше вообще не показывала результаты метода** — только
+  метод/номер заказчику/номер лаборатории. Добавлен read-only блок с результатами
+  испытания, сгруппированными по смысловым разделам (как в ЛИМС), через новый
+  эндпоинт lab-service `GET /requests/{id}/short-view` — секции строятся ОДИН РАЗ
+  на сервере (`buildProtocolSections`/`buildShortView`, см. lab-service `AGENTS.md`),
+  клиент только рисует то, что пришло (не дублирует логику группировки на TS).
+  `RequestsSyncService.getShortView()` (тот же JWT `app_id=lab`, что и остальные
+  запросы плагина); рендер — `renderShortView()` в `requests-view.ts`, вызывается
+  fire-and-forget из синхронного `renderRequestDetail()`.
+- Новый CSS-класс `.tn-req-thumb` (превью фото-атрибутов в таблице результатов,
+  зеркало `.tn-lims-thumb`).
+- **`announceUpdate` в ЦУП** (новое правило корневого AGENTS.md, 2026-08-22):
+  `onload()` публикует новость об обновлении в «Новости» ЦУП один раз на версию
+  (`lastAnnouncedVersion` в `data.json`), через `getService('sbe-apstore')`.
+- `npx tsc --noEmit`/`npm run build` — чисто. Версия 0.1.15 → **0.1.16**.
 
 ### 2026-08-22 — v0.1.15 (карточки заявок; фикс потери ЕКН/номера партии при редактировании)
 - **Визуальные карточки**: список заявок (`renderView`) переведён с `<table class="tn-table">`

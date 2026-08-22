@@ -21,6 +21,7 @@ SBE-плагин «Заявки на испытания». Клиент lab-serv
 | GET | `/requests/{id}` | viewer (видимость) | `{"request":{...}}`; 403 если не видно |
 | PATCH | `/requests/{id}` | editor+/владелец | `{title,description,object_id,project_id,group_id,priority,test_purpose,ekn,external_id}` → `{request}` (метод/лаба фиксируются при создании, не редактируются) |
 | POST | `/requests/{id}/status` | editor | `{status}` (new/processing/completed) → `{ok}` |
+| GET | `/requests/{id}/short-view` | viewer | `{sections: ShortViewSection[]}` (2026-08-22) — результаты испытания, сгруппированные по секциям (read-only), тот же вид, что в ЛИМС; см. `sbe-lims/specification.md` для формы `ShortViewSection`/`ShortViewTable`/`ShortViewColumn`/`ShortViewSummaryRow` |
 | GET | `/groups` | viewer | `{"groups":[...]}` (мои + где участник) |
 | POST | `/groups` | editor | `{name}` → `{id}` |
 | POST | `/groups/{id}/members` | владелец/admin | `{email,role}` (viewer/editor) → `{ok}` |

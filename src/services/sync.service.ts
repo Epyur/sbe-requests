@@ -2,7 +2,7 @@ import { requestUrl, RequestUrlParam } from 'obsidian';
 import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import type { RequestsDatabase } from '../database/requests-db';
-import type { LabRequest, PullResponse, PushResponse, UploadFileResponse } from '../types/requests';
+import type { LabRequest, PullResponse, PushResponse, ShortViewSection, UploadFileResponse } from '../types/requests';
 
 export interface SyncResult {
   pushed: number;
@@ -307,6 +307,27 @@ export class RequestsSyncService {
       headers: { Authorization: `Bearer ${token}` },
     });
     this.assertOk(res);
+  }
+
+  /** Короткий вид результатов метода заявки (read-only) — секции сгруппированы
+   * на сервере тем же кодом, что видит редактор конфигуратора в ЛИМС (см.
+   * lab-service/protocol.go handleShortView); заявки на испытания раньше вообще
+   * не показывали результаты метода. */
+  async getShortView(requestId: number): Promise<ShortViewSection[]> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/lab/requests/${requestId}/short-view`,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
+    try {
+      const parsed = JSON.parse(res.text) as { sections?: ShortViewSection[] };
+      return parsed.sections ?? [];
+    } catch (e: unknown) {
+      console.warn('Заявки: не JSON в ответе short-view:', errorMessage(e));
+      throw new Error('Сервер вернул не JSON для короткого вида результатов');
+    }
   }
 
   /** Сменяет статус заявки (editor). status: new|processing|completed. */

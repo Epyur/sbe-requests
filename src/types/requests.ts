@@ -193,3 +193,29 @@ export interface UploadFileResponse {
   file_url: string;
   request_id: number;
 }
+
+/** Короткий вид результатов метода (GET /api/lab/requests/{id}/short-view) —
+ * read-only, зеркало типов sbe-lims/src/types/lims.ts (2026-08-22). Заявки на
+ * испытания раньше вообще не показывали результаты метода — только карточка
+ * метода/номеров; теперь показывают тот же группированный вид, что и ЛИМС,
+ * без дублирования логики группировки (она строится один раз на сервере). */
+export interface ShortViewColumn {
+  label: string;
+  is_photo: boolean;
+}
+
+export interface ShortViewTable {
+  columns: ShortViewColumn[];
+  rows: string[][];
+}
+
+export interface ShortViewSummaryRow {
+  label: string;
+  value: string;
+}
+
+export interface ShortViewSection {
+  title: string;
+  table?: ShortViewTable;
+  summary?: ShortViewSummaryRow[];
+}

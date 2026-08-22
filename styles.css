@@ -990,3 +990,9 @@
 .tn-req-mt8 {
   margin-top: 8px;
 }
+.tn-req-thumb {
+  max-width: 80px;
+  max-height: 80px;
+  border: 1px solid var(--tn-border);
+  border-radius: 4px;
+}
