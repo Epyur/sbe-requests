@@ -1,6 +1,6 @@
 {
   "name": "sbe-requests",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "Заявки на испытания как SBE-плагин: локальная БД yourbase/sbe_requests/, синхронизация с lab-service через JWT из ЦУП, файлы в S3.",
   "main": "main.js",
   "scripts": {

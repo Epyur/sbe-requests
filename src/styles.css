@@ -403,12 +403,50 @@
   opacity: 1;
 }
 
-.tn-req-row {
+/* Заявка в списке (renderView) — карточка вместо таблицы, тот же паттерн, что
+ * .tn-task-card в sbe-tasks: кликабельна целиком, hover меняет цвет рамки. */
+.tn-req-card {
+  background: var(--tn-card);
+  border: 1px solid var(--tn-border);
+  border-radius: var(--tn-radius);
+  padding: 12px 14px;
+  margin-bottom: 12px;
   cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.tn-req-row:hover {
-  background: var(--background-secondary-hover);
+.tn-req-card:hover {
+  border-color: var(--tn-brand);
+}
+
+.tn-req-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tn-req-card-head h4 {
+  margin: 0;
+  font-size: 14px;
+  flex: 1;
+  min-width: 0;
+}
+
+.tn-req-card-status {
+  font-size: var(--font-smaller);
+  color: var(--tn-muted);
+  white-space: nowrap;
+}
+
+.tn-req-card-meta {
+  font-size: var(--font-smaller);
+  color: var(--tn-muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
 }
 
 .tn-req-btn-sm {
@@ -421,8 +459,9 @@
 }
 
 .tn-req-methods {
-  border: 1px solid var(--border-divider-default);
-  border-radius: 8px;
+  background: var(--tn-card);
+  border: 1px solid var(--tn-border);
+  border-radius: var(--tn-radius);
   padding: 8px;
 }
 
@@ -442,10 +481,17 @@
   flex-shrink: 0;
 }
 
+/* Карточки (группа/объект/заявка) — те же токены дизайн-системы SBE, что и у
+ * карточек задач в sbe-tasks (.tn-task-card) и общей .tn-card в sbe-core, для
+ * визуальной согласованности между плагинами (2026-08-22, по просьбе
+ * пользователя). Раньше border ссылался на неопределённую переменную
+ * --border-divider-default (нигде в sbe-core не задана) — рамка не отображалась
+ * вовсе, отсюда и жалоба, что группы элементов "не выделяются". */
 .tn-req-group-card {
-  border: 1px solid var(--border-divider-default);
-  border-radius: 8px;
-  padding: 12px;
+  background: var(--tn-card);
+  border: 1px solid var(--tn-border);
+  border-radius: var(--tn-radius);
+  padding: 12px 14px;
 }
 
 .tn-req-member-input {
@@ -457,9 +503,10 @@
 }
 
 .tn-req-object-section {
-  border: 1px solid var(--border-divider-default);
-  border-radius: 8px;
-  padding: 12px;
+  background: var(--tn-card);
+  border: 1px solid var(--tn-border);
+  border-radius: var(--tn-radius);
+  padding: 12px 14px;
   margin: 8px 0;
 }
 

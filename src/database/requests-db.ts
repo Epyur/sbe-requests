@@ -183,6 +183,25 @@ export class RequestsDatabase {
     return this.data.objects;
   }
 
+  /** Добавляет/обновляет объект в локальном кэше по его id (upsert). Нужен
+   * сразу после syncService.createObject() — тот делает реальный запрос к
+   * серверу и создаёт объект немедленно, но локальный кэш objects обновляется
+   * иначе только целиком через replaceReferenceData (полный pull). Без этого
+   * следующий же рендер (включая тот же экран сразу после сохранения) искал бы
+   * object_id, которого в кэше ещё нет, и показывал бы characteristics как
+   * пустые — то есть ЕКН/номер партии/название "терялись" бы визуально, хотя
+   * на сервере объект создан корректно (обнаружено 2026-08-22: у заявок,
+   * отредактированных после импорта, характеристики "обнулялись" после
+   * «Сохранить» именно по этой причине). */
+  addObject(obj: LabObject): void {
+    const idx = this.data.objects.findIndex(o => o.id === obj.id);
+    if (idx !== -1) {
+      this.data.objects[idx] = obj;
+    } else {
+      this.data.objects.push(obj);
+    }
+  }
+
   add(req: LabRequest): void {
     const idx = this.data.requests.findIndex(r => r.id === req.id);
     if (idx !== -1) {

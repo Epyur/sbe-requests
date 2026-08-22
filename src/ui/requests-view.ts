@@ -1,6 +1,6 @@
 import { FileSystemAdapter, ItemView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type SbeRequestsPlugin from '../main';
-import type { LabProject, LabRequest, ObjectCharacteristics } from '../types/requests';
+import type { LabObject, LabProject, LabRequest, ObjectCharacteristics } from '../types/requests';
 import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { REQUESTS_HELP_MD, REQUESTS_HELP_PATH } from './help';
@@ -313,24 +313,17 @@ export class RequestsView extends ItemView {
       return;
     }
 
-    const table = listDiv.createEl('table', { cls: 'tn-table' });
-    const thead = table.createEl('thead');
-    const headerRow = thead.createEl('tr');
-    const headers = ['Номер заявки', 'Метод', 'Объект', 'Статус', 'Обновлено'];
-    for (const h of headers) headerRow.createEl('th').setText(h);
-
-    const tbody = table.createEl('tbody');
     requests.sort((a, b) => (b.number_year - a.number_year) || (b.number_seq - a.number_seq));
     for (const r of requests) {
-      const row = tbody.createEl('tr', { cls: 'tn-req-row' });
-      row.addEventListener('click', () => this.renderRequestDetail(r));
-
-      const numCell = row.createEl('td');
-      numCell.setText(r.customer_number || '—');
-      row.createEl('td').setText(this.methodName(r.method_id));
-      row.createEl('td').setText(this.objectName(r.object_id));
-      row.createEl('td').setText(STATUS_LABELS[r.status] || r.status);
-      row.createEl('td').setText(this.formatDate(r.updated_at));
+      const card = listDiv.createDiv({ cls: 'tn-req-card' });
+      card.addEventListener('click', () => this.renderRequestDetail(r));
+      const head = card.createDiv({ cls: 'tn-req-card-head' });
+      head.createEl('h4', { text: r.customer_number || `#${r.id}` });
+      head.createSpan({ cls: 'tn-req-card-status', text: STATUS_LABELS[r.status] || r.status });
+      const meta = card.createDiv({ cls: 'tn-req-card-meta' });
+      meta.createSpan({ text: `🧪 ${this.methodName(r.method_id)}` });
+      meta.createSpan({ text: `🔬 ${this.objectName(r.object_id)}` });
+      meta.createSpan({ text: `📅 ${this.formatDate(r.updated_at)}` });
     }
   }
 
@@ -794,7 +787,23 @@ export class RequestsView extends ItemView {
       if (snap && snap.name) {
         eknSnapshot.setText(`📄 Найдено в справочнике: ${snap.name}${snap.thickness ? ' · ' + snap.thickness : ''}${snap.sto_number ? ' · ' + snap.sto_number : ''}`);
       } else {
-        eknSnapshot.setText('⚠️ Неизвестный продукт, введите название');
+        // Отсутствие сохранённого снимка — НЕ значит, что продукта нет в
+        // справочнике: у заявок, пришедших через email-импорт, снимок никогда
+        // не записывался (импорт не обращался к sbe-ekn). Раньше здесь сразу
+        // показывалось «неизвестный продукт», хотя ЕКН у самого продукта был
+        // валиден — пользователь должен был вручную удалить и заново ввести
+        // цифру в поле, чтобы триггернуть поиск (2026-08-22, обнаружено при
+        // редактировании импортированной заявки). Пробуем разрешить свежим
+        // лукапом, прежде чем объявлять продукт неизвестным.
+        const eknToLookup = eknInput.value.trim();
+        if (/^\d{6}$/.test(eknToLookup)) {
+          eknSnapshot.setText('🔍 Проверяю справочник…');
+          void this.lookupEknExact(eknToLookup, expNameInput, expThickInput, eknSnapshot).then((freshSnap) => {
+            if (freshSnap) { lastEknSnapshot = freshSnap; refreshIndicators(); }
+          });
+        } else {
+          eknSnapshot.setText('⚠️ Неизвестный продукт, введите название');
+        }
       }
     } else {
       if (existingObj) expNameInput.value = existingObj.name;
@@ -1030,6 +1039,13 @@ export class RequestsView extends ItemView {
         if (expThickInput.value.trim()) characteristics.thickness_mm = expThickInput.value.trim();
         if (selectedTargets.size > 0) characteristics.target_indicators = Object.fromEntries(selectedTargets);
         objectId = await this.plugin.syncService.createObject(objectName, '', characteristics);
+        if (objectId > 0) {
+          const now = new Date().toISOString();
+          this.plugin.requestsDb.addObject({
+            id: objectId, name: objectName, description: '',
+            characteristics: characteristics as ObjectCharacteristics, created_at: now, updated_at: now,
+          } as LabObject);
+        }
       } else {
         const expName = expNameInput.value.trim();
         if (!expName) { new Notice('Введите название материала (или укажите ЕКН)'); return; }
@@ -1043,6 +1059,13 @@ export class RequestsView extends ItemView {
         if (expThickInput.value.trim()) characteristics.thickness_mm = expThickInput.value.trim();
         if (selectedTargets.size > 0) characteristics.target_indicators = Object.fromEntries(selectedTargets);
         objectId = await this.plugin.syncService.createObject(objectName, '', characteristics);
+        if (objectId > 0) {
+          const now = new Date().toISOString();
+          this.plugin.requestsDb.addObject({
+            id: objectId, name: objectName, description: '',
+            characteristics: characteristics as ObjectCharacteristics, created_at: now, updated_at: now,
+          } as LabObject);
+        }
       }
       if (objectId <= 0) { new Notice('Не удалось создать объект исследования'); return; }
 
