@@ -2,7 +2,7 @@ import { requestUrl, RequestUrlParam } from 'obsidian';
 import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import type { RequestsDatabase } from '../database/requests-db';
-import type { LabRequest, PullResponse, PushResponse, ShortViewSection, UploadFileResponse } from '../types/requests';
+import type { LabRequest, ProtocolResponse, PullResponse, PushResponse, UploadFileResponse } from '../types/requests';
 
 export interface SyncResult {
   pushed: number;
@@ -309,24 +309,25 @@ export class RequestsSyncService {
     this.assertOk(res);
   }
 
-  /** Короткий вид результатов метода заявки (read-only) — секции сгруппированы
-   * на сервере тем же кодом, что видит редактор конфигуратора в ЛИМС (см.
-   * lab-service/protocol.go handleShortView); заявки на испытания раньше вообще
-   * не показывали результаты метода. */
-  async getShortView(requestId: number): Promise<ShortViewSection[]> {
+  /** Краткий вид результатов метода заявки (read-only) — тот же эндпоинт, что
+   * и остальные виды документа в ЛИМС, но kind="ui"&format="html" (html
+   * приходит готовым, плейсхолдеры уже резолвлены сервером — не тратим время
+   * на сборку DOCX только для предпросмотра). Заявки на испытания раньше
+   * вообще не показывали результаты метода. */
+  async getProtocolHTML(requestId: number): Promise<string> {
     const token = await this.getToken();
     const res = await this.request({
-      url: `${this.baseUrl}/api/lab/requests/${requestId}/short-view`,
-      method: 'GET',
+      url: `${this.baseUrl}/api/lab/requests/${requestId}/protocol?template=ui&format=html`,
+      method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     });
     this.assertOk(res);
     try {
-      const parsed = JSON.parse(res.text) as { sections?: ShortViewSection[] };
-      return parsed.sections ?? [];
+      const parsed = JSON.parse(res.text) as ProtocolResponse;
+      return parsed.html;
     } catch (e: unknown) {
-      console.warn('Заявки: не JSON в ответе short-view:', errorMessage(e));
-      throw new Error('Сервер вернул не JSON для короткого вида результатов');
+      console.warn('Заявки: не JSON в ответе protocol:', errorMessage(e));
+      throw new Error('Сервер вернул не JSON для результатов метода');
     }
   }
 

@@ -33,7 +33,7 @@ SBE-плагин «Заявки на испытания»: локальная Б
 | `src/services/sync.service.ts` | `RequestsSyncService`: sync/push/pull, создание справочников/проектов/групп, участники, статусы, файлы, permissions/common-access, JWT, multipart, таймауты |
 | `src/ui/requests-view.ts` | `RequestsView`: дерево проектов → заявки, карточка заявки, создание/правка, группы, справочники, файлы, статусы |
 | `src/ui/settings-tab.ts` | Настройки: apiUrl + «Права доступа» (роли viewer/editor/admin + общий доступ) |
-| `src/types/requests.ts` | `LabRequest`, `LabProject`, `LabGroup`, `Lab`, `LabMethod`, `LabObject`, `RequestMethod`, `RequestFile`, `RequestsDbData`, `PullResponse`, `PushResponse`, `UploadFileResponse`, `ShortViewSection`/`ShortViewTable`/`ShortViewColumn`/`ShortViewSummaryRow` (2026-08-22, зеркало sbe-lims) |
+| `src/types/requests.ts` | `LabRequest`, `LabProject`, `LabGroup`, `Lab`, `LabMethod`, `LabObject`, `RequestMethod`, `RequestFile`, `RequestsDbData`, `PullResponse`, `PushResponse`, `UploadFileResponse`, `ProtocolResponse{html, docx_base64, generated_at}` (2026-08-23; заменил `ShortViewSection`/`ShortViewTable`/`ShortViewColumn`/`ShortViewSummaryRow` от 2026-08-22, см. sbe-lims) |
 | `src/styles.css` | Классы `tn-req-*` на семантических токенах |
 
 ## Настройки (data.json)
@@ -50,6 +50,25 @@ SBE-плагин «Заявки на испытания»: локальная Б
   документацию, подготовить сообщение для коммита и СПРОСИТЬ подтверждение commit/push.**
 
 ## История работ
+
+### 2026-08-23 — v0.1.17 (карточка заявки — блочный HTML-протокол вместо секций JSON)
+- **sbe-lims заменил секции представления на блочный rich-text редактор с
+  плейсхолдерами** (см. sbe-lims `AGENTS.md`, 2026-08-23) — серверный эндпоинт
+  `GET /requests/{id}/short-view` (JSON-секции), которым пользовался этот блок,
+  **удалён**. Read-only блок результатов в карточке заявки теперь получает
+  готовый HTML тем же способом, что модалка полного протокола: `POST
+  /requests/{id}/protocol?template=ui&format=html` → `DOMParser` →
+  `doc.body.innerHTML` вставляется в контейнер (только `<body>`, не весь
+  документ — у ответа сервера есть глобальный `<style>` в `<head>`, который
+  иначе просочился бы в общий DOM Обсидиана).
+- `RequestsSyncService.getShortView()` удалён, добавлен `getProtocolHTML(requestId)`
+  (обёртка над `getProtocol(id,'ui','html')`). `renderShortView()` в
+  `requests-view.ts` — тот же вызов, что и раньше (fire-and-forget из
+  `renderRequestDetail()`), меняется только источник HTML.
+- Удалён неиспользуемый CSS-класс `.tn-req-thumb` (превью фото было частью
+  собственного рендера секций — сервер теперь сам решает разметку внутри
+  присланного HTML).
+- `npx tsc --noEmit`/`npm run build` — чисто. Версия 0.1.16 → **0.1.17**.
 
 ### 2026-08-22 — v0.1.16 (короткий вид результатов в карточке заявки; announceUpdate)
 - **Карточка заявки раньше вообще не показывала результаты метода** — только
