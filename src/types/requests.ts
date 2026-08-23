@@ -152,6 +152,16 @@ export interface LabRequest {
   /** Родительская заявка: под-заявка создаётся добавлением метода и делит
    * её NNN (только пока родитель в статусе new). Только у локальных черновиков. */
   parent_id?: number;
+  /** Системные атрибуты (2026-08-23) — испытатель/даты/условия среды, общие для
+   * ЛЮБОГО метода; заполняются автоматически из письма-результата (см.
+   * sbe-lims/AGENTS.md, «Системные атрибуты»). Пусто/0, пока не пришли. */
+  inventor_id: number;
+  report_date: string;
+  samples_in_date: string;
+  exp_date: string;
+  amb_temp: string;
+  amb_pres: string;
+  amb_moist: string;
   files: RequestFile[];
   created_at: string;
   updated_at: string;

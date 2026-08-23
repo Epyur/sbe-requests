@@ -73,6 +73,12 @@ LabRequest{ id, number_seq, number_year, title, description, object_id, project_
             customer_number: string, lab_number: string,
             group_key?: string,   // только у локальных новых под-заявок одного создания
             parent_id?: number,   // только у локальных черновиков «добавление метода»
+            // Системные атрибуты (2026-08-23) — испытатель/даты/условия среды, общие
+            // для ЛЮБОГО метода; заполняются автоматически из письма-результата
+            // email-импорта на сервере (не через этот плагин). См. sbe-lims/AGENTS.md,
+            // «Правило: системные атрибуты». Пусто/0, пока не пришли.
+            inventor_id: number, report_date: string, samples_in_date: string,
+            exp_date: string, amb_temp: string, amb_pres: string, amb_moist: string,
             files: RequestFile[], created_at, updated_at, sync_status }
 ```
 
