@@ -1039,6 +1039,32 @@ export class RequestsView extends ItemView {
       // Собираем характеристики объекта исследования
       let objectId = 0;
       let objectName = '';
+      // saveObject — обновляет уже привязанный объект (existingObj) вместо
+      // создания нового (2026-08-24, по прямому запросу пользователя: "проверь
+      // и исправь чтобы у нас не плодились сироты"). Раньше редактирование
+      // заявки с уже привязанным объектом ВСЕГДА вызывало createObject —
+      // каждое изменение материала/толщины/целевого показателя заводило новый
+      // объект, а старый оставался ни к чему не привязанным навсегда (найдено
+      // на живом кейсе: целевой показатель осел в новом объекте, заявка
+      // осталась смотреть на старый — классификация не находила показатель).
+      const saveObject = async (name: string, characteristics: Record<string, unknown>): Promise<number> => {
+        const now = new Date().toISOString();
+        if (existingObj) {
+          await this.plugin.syncService.updateObject(existingObj.id, { name, characteristics });
+          this.plugin.requestsDb.addObject({
+            ...existingObj, name, characteristics: characteristics as ObjectCharacteristics, updated_at: now,
+          });
+          return existingObj.id;
+        }
+        const id = await this.plugin.syncService.createObject(name, '', characteristics);
+        if (id > 0) {
+          this.plugin.requestsDb.addObject({
+            id, name, description: '', characteristics: characteristics as ObjectCharacteristics,
+            created_at: now, updated_at: now,
+          } as LabObject);
+        }
+        return id;
+      };
       if (isEknMode) {
         const batchStr = batchInput.value.trim();
         if (!batchStr || !/^\d+$/.test(batchStr)) {
@@ -1063,14 +1089,7 @@ export class RequestsView extends ItemView {
         if (lastEknSnapshot) characteristics.ekn_snapshot = lastEknSnapshot;
         if (expThickInput.value.trim()) characteristics.thickness_mm = expThickInput.value.trim();
         if (selectedTargets.size > 0) characteristics.target_indicators = Object.fromEntries(selectedTargets);
-        objectId = await this.plugin.syncService.createObject(objectName, '', characteristics);
-        if (objectId > 0) {
-          const now = new Date().toISOString();
-          this.plugin.requestsDb.addObject({
-            id: objectId, name: objectName, description: '',
-            characteristics: characteristics as ObjectCharacteristics, created_at: now, updated_at: now,
-          } as LabObject);
-        }
+        objectId = await saveObject(objectName, characteristics);
       } else {
         const expName = expNameInput.value.trim();
         if (!expName) { new Notice('Введите название материала (или укажите ЕКН)'); return; }
@@ -1083,14 +1102,7 @@ export class RequestsView extends ItemView {
         };
         if (expThickInput.value.trim()) characteristics.thickness_mm = expThickInput.value.trim();
         if (selectedTargets.size > 0) characteristics.target_indicators = Object.fromEntries(selectedTargets);
-        objectId = await this.plugin.syncService.createObject(objectName, '', characteristics);
-        if (objectId > 0) {
-          const now = new Date().toISOString();
-          this.plugin.requestsDb.addObject({
-            id: objectId, name: objectName, description: '',
-            characteristics: characteristics as ObjectCharacteristics, created_at: now, updated_at: now,
-          } as LabObject);
-        }
+        objectId = await saveObject(objectName, characteristics);
       }
       if (objectId <= 0) { new Notice('Не удалось создать объект исследования'); return; }
 
@@ -1166,10 +1178,27 @@ export class RequestsView extends ItemView {
             });
           }
           await this.plugin.requestsDb.save();
-          new Notice(addedCount > 0
-            ? `Заявка обновлена; добавлено под-заявок по методам: ${addedCount} (отправятся при синхронизации)`
-            : 'Заявка обновлена (будет отправлена при синхронизации)');
-          this.renderRequestDetail(existing);
+          // Синхронизация сразу после сохранения (2026-08-24, по прямому запросу
+          // пользователя) — раньше правки лежали в локальном кэше со статусом
+          // "local" до отдельного клика по "Синхронизация", из-за чего сервер
+          // мог долго не видеть актуальные данные (найдено на живом кейсе:
+          // целевой показатель, введённый здесь, не долетал до сервера, пока
+          // пользователь не синхronизировал вручную). Ошибка сети не откатывает
+          // локальное сохранение — просто предупреждаем, правка всё равно
+          // останется в очереди на следующую синхронизацию.
+          let synced = true;
+          try {
+            await this.plugin.syncService.sync();
+          } catch (e: unknown) {
+            synced = false;
+            new Notice(`Заявка сохранена локально, но синхронизация не выполнена: ${errorMessage(e)}`);
+          }
+          if (synced) {
+            new Notice(addedCount > 0
+              ? `Заявка обновлена и отправлена на сервер; добавлено под-заявок по методам: ${addedCount}`
+              : 'Заявка обновлена и отправлена на сервер');
+          }
+          this.renderRequestDetail(this.plugin.requestsDb.getById(existing.id) || existing);
         } else {
           // Один запрос → N под-заявок с общим group_key (сервер выделит один NNN группе).
           const groupKey = String(Date.now()) + '-' + Math.floor(Math.random() * 1000);
@@ -1204,9 +1233,18 @@ export class RequestsView extends ItemView {
             this.plugin.requestsDb.add(newReq);
           });
           await this.plugin.requestsDb.save();
-          new Notice(methodLabPairs.length > 1
-            ? `Заявка создана как ${methodLabPairs.length} под-заявки (по методу), будут отправлены при синхронизации`
-            : 'Заявка создана (будет отправлена при синхронизации)');
+          let created = true;
+          try {
+            await this.plugin.syncService.sync();
+          } catch (e: unknown) {
+            created = false;
+            new Notice(`Заявка сохранена локально, но синхронизация не выполнена: ${errorMessage(e)}`);
+          }
+          if (created) {
+            new Notice(methodLabPairs.length > 1
+              ? `Заявка создана как ${methodLabPairs.length} под-заявки (по методу) и отправлена на сервер`
+              : 'Заявка создана и отправлена на сервер');
+          }
           this.renderView();
         }
       } catch (e: unknown) {

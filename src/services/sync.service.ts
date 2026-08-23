@@ -198,6 +198,21 @@ export class RequestsSyncService {
     return this.createReference('/api/lab/objects', { name, description, characteristics });
   }
 
+  /** Обновляет объект исследования (editor) — characteristics заменяются целиком,
+   * не мержатся (2026-08-24; см. requests-view.ts renderRequestForm — вызывается
+   * вместо createObject при редактировании заявки с уже привязанным объектом,
+   * иначе каждое редактирование заводило новый "осиротевший" объект). */
+  async updateObject(id: number, data: { name?: string; description?: string; characteristics?: Record<string, unknown> }): Promise<void> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/lab/objects/${id}`,
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify(data),
+    });
+    this.assertOk(res);
+  }
+
   /** Получает данные продукта по ЕКН из sbe-ekn. При недоступности — null (не блокирует заявку). */
   async getEknProduct(ekn: string): Promise<import('../types/requests').ObjectCharacteristics['ekn_snapshot'] | null> {
     try {

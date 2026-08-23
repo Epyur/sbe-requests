@@ -13,6 +13,7 @@ SBE-плагин «Заявки на испытания». Клиент lab-serv
 | POST | `/labs` | superadmin | `{code,name,description,type?}` → `{id}` (создание — только в sbe-lims) |
 | POST | `/methods` | admin | `{code,name,lab_ids: number[],description,determinable_indicators?}` → `{id}` (минимум одна лаба; метод может принадлежать нескольким, 2026-08-19) |
 | POST | `/objects` | editor | `{name,description,characteristics}` → `{id}` |
+| PATCH | `/objects/{id}` | editor | `{name?,description?,characteristics?}` → `{ok}` (2026-08-24; `characteristics`, если передан, заменяется ЦЕЛИКОМ, не мержится) |
 | GET | `/projects` | viewer | `{"projects":[...]}` (видимые: публичные + свои + по группе + admin; включены предки видимых) |
 | POST | `/projects` | editor | `{parent_id,code,name,description,is_ekn,group_id}` → `{id}`; 409 code exists; 400 group not found |
 | PATCH | `/projects/{id}` | editor+/владелец | `{parent_id,code,name,description,is_ekn,group_id}` → `{ok}` (0 = «отвязать» группу) |
