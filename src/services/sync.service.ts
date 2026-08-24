@@ -346,6 +346,45 @@ export class RequestsSyncService {
     }
   }
 
+  /** Полный протокол (template=protocol, format=full — с DOCX) — для кнопки
+   * «Скачать протокол (Word)» прямо со страницы заявок (2026-08-24, по
+   * прямому запросу пользователя: раньше DOCX было доступно только в ЛИМС). */
+  async getProtocolDocx(requestId: number): Promise<string> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/lab/requests/${requestId}/protocol?template=protocol&format=full`,
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
+    try {
+      const parsed = JSON.parse(res.text) as ProtocolResponse;
+      return parsed.docx_base64;
+    } catch (e: unknown) {
+      console.warn('Заявки: не JSON в ответе protocol:', errorMessage(e));
+      throw new Error('Сервер вернул не JSON для протокола');
+    }
+  }
+
+  /** Таблица всех данных заявки (серии + агрегаты/статистика) в Excel
+   * (2026-08-24, по прямому запросу пользователя). */
+  async getExportXlsx(requestId: number): Promise<string> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/lab/requests/${requestId}/export.xlsx`,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
+    try {
+      const parsed = JSON.parse(res.text) as { xlsx_base64: string };
+      return parsed.xlsx_base64;
+    } catch (e: unknown) {
+      console.warn('Заявки: не JSON в ответе export.xlsx:', errorMessage(e));
+      throw new Error('Сервер вернул не JSON для выгрузки Excel');
+    }
+  }
+
   /** Сменяет статус заявки (editor). status: new|processing|completed. */
   async setRequestStatus(requestId: number, status: string): Promise<void> {
     const token = await this.getToken();

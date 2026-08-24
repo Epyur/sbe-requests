@@ -23,6 +23,8 @@ SBE-плагин «Заявки на испытания». Клиент lab-serv
 | PATCH | `/requests/{id}` | editor+/владелец | `{title,description,object_id,project_id,group_id,priority,test_purpose,ekn,external_id}` → `{request}` (метод/лаба фиксируются при создании, не редактируются) |
 | POST | `/requests/{id}/status` | editor | `{status}` (new/processing/completed) → `{ok}` |
 | POST | `/requests/{id}/protocol?template=ui&format=html` | viewer | `{html, docx_base64: "", generated_at}` — HTML результатов испытания (read-only блок в карточке заявки), тот же вид, что в карточке ЛИМС; см. `sbe-lims/specification.md` для формы блоков (2026-08-23, заменил JSON-эндпоинт `.../short-view`) |
+| POST | `/requests/{id}/protocol?template=protocol&format=full` | viewer | `{html: "", docx_base64, generated_at}` — полный протокол в DOCX (2026-08-24, кнопка «📄 Скачать протокол (Word)» в карточке заявки, `getProtocolDocx()`) |
+| GET | `/requests/{id}/export.xlsx` | editor | `{xlsx_base64}` — таблица всех данных заявки: серии + агрегаты/статистика (2026-08-24, кнопка «📊 Скачать таблицу (Excel)», `getExportXlsx()`; см. `lab-service/AGENTS.md` — `excelize`) |
 | GET | `/groups` | viewer | `{"groups":[...]}` (мои + где участник) |
 | POST | `/groups` | editor | `{name}` → `{id}` |
 | POST | `/groups/{id}/members` | владелец/admin | `{email,role}` (viewer/editor) → `{ok}` |
@@ -223,4 +225,17 @@ admin+ (сервер). Участники групп — владелец гру
   поле «Группа (видимость)» формы автоматически подставляется группой проекта
   (смена проекта в форме переустанавливает его группу; при редактировании заявки
   существующее значение не трогается).
+- **Полный номер заявки везде** (2026-08-24, по прямому запросу пользователя): заголовок
+  карточки заявки и имена скачиваемых файлов (Word/Excel) показывают `customer_number`
+  (`{projectID}-{NNN}/{yyyy}-{labID}-{methodID}`) — единственную форму со всеми тремя
+  кодами; короткий `NNN/yyyy` — только fallback для черновика, которому сервер ещё не
+  присвоил номер (`requestNumber()`).
+- **Краткий вид результатов** (блок в карточке заявки) обёрнут классом `.tn-protocol-html`
+  (2026-08-24) — границы и центрирование таблиц результатов, зеркалит серверный `<style>`
+  из `protocol.go`, который сюда не доходит (вставляется только `doc.body.innerHTML`).
+- **Скачивание отчёта прямо со страницы заявок** (2026-08-24, по прямому запросу
+  пользователя — раньше Word был доступен только в ЛИМС, Excel не было вообще нигде):
+  в карточке заявки (editor+) — кнопки «📄 Скачать протокол (Word)» и «📊 Скачать
+  таблицу (Excel)» (серии + агрегаты/статистика), общий хелпер `downloadBase64File`
+  (`sbe-core/src/utils/download.ts`).
 - Настройки: `apiUrl` + раздел «Права доступа» (роли + общий доступ, admin).

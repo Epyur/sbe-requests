@@ -3,6 +3,7 @@ import type SbeRequestsPlugin from '../main';
 import type { LabObject, LabProject, LabRequest, ObjectCharacteristics } from '../types/requests';
 import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
+import { downloadBase64File } from '../../../sbe-core/src/utils/download';
 import { REQUESTS_HELP_MD, REQUESTS_HELP_PATH } from './help';
 
 export const SBE_REQUESTS_VIEW_TYPE = 'sbe-requests-view';
@@ -448,7 +449,10 @@ export class RequestsView extends ItemView {
       const doc = new DOMParser().parseFromString(html, 'text/html');
       if (!doc.body.innerHTML.trim()) return;
       container.createDiv({ cls: 'tn-req-meta tn-req-mb4', text: '📊 Результаты испытания:' });
-      container.createDiv().innerHTML = doc.body.innerHTML;
+      // .tn-protocol-html (2026-08-24, sbe-core) — серверный <style> сюда не
+      // доходит (см. комментарий выше), зеркалим границы/центрирование таблиц
+      // результатов отдельным общим классом.
+      container.createDiv({ cls: 'tn-protocol-html' }).innerHTML = doc.body.innerHTML;
     } catch (e: unknown) {
       container.createDiv({ cls: 'tn-req-meta' }).setText(`Ошибка загрузки результатов: ${errorMessage(e)}`);
     }
@@ -514,6 +518,39 @@ export class RequestsView extends ItemView {
       // подгружаем отдельно, не блокируя остальной рендер карточки.
       const shortViewDiv = methodsDiv.createDiv({ cls: 'tn-req-mt8' });
       void this.renderShortView(shortViewDiv, req.id);
+
+      // Скачивание протокола (Word) и таблицы всех данных (Excel) прямо со
+      // страницы заявок (2026-08-24, по прямому запросу пользователя — раньше
+      // Word был доступен только в ЛИМС, Excel не было вообще нигде).
+      if (this.canEdit) {
+        const exportRow = methodsDiv.createDiv({ cls: 'tn-req-flex tn-req-mt8' });
+        const wordBtn = exportRow.createEl('button', { text: '📄 Скачать протокол (Word)', cls: 'tn-btn tn-btn-ghost' });
+        wordBtn.addEventListener('click', async () => {
+          wordBtn.setAttr('disabled', 'true');
+          try {
+            const docxBase64 = await this.plugin.syncService.getProtocolDocx(req.id);
+            downloadBase64File(docxBase64, `protocol_${this.requestNumber(req).replace(/\//g, '-')}.docx`,
+              'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+          } catch (e: unknown) {
+            new Notice(`Ошибка скачивания: ${errorMessage(e)}`);
+          } finally {
+            wordBtn.removeAttribute('disabled');
+          }
+        });
+        const excelBtn = exportRow.createEl('button', { text: '📊 Скачать таблицу (Excel)', cls: 'tn-btn tn-btn-ghost' });
+        excelBtn.addEventListener('click', async () => {
+          excelBtn.setAttr('disabled', 'true');
+          try {
+            const xlsxBase64 = await this.plugin.syncService.getExportXlsx(req.id);
+            downloadBase64File(xlsxBase64, `data_${this.requestNumber(req).replace(/\//g, '-')}.xlsx`,
+              'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+          } catch (e: unknown) {
+            new Notice(`Ошибка скачивания: ${errorMessage(e)}`);
+          } finally {
+            excelBtn.removeAttribute('disabled');
+          }
+        });
+      }
     }
 
     if (req.files && req.files.length > 0) {
@@ -592,11 +629,23 @@ export class RequestsView extends ItemView {
 
   /** Номер заявки для отображения. У черновика-под-заявки (number_seq = 0,
    * есть parent_id) показывается номер родителя, чей NNN она разделит. */
+  /** Полный номер заявки (2026-08-24, по прямому запросу пользователя — везде
+   * должен фигурировать полный номер, "с кодом проекта, лаборатории, метода",
+   * не сокращённый вид) — `customer_number` ({projectCode}-{NNN}/{yyyy}-
+   * {labCode}-{methodCode}), единственная форма со всеми тремя кодами. У
+   * черновика-под-заявки (`object_id`/`id` создания методом «добавить методы»)
+   * своего номера ещё нет — показывается номер родителя, пока сервер не
+   * присвоит номер этой под-заявке. Короткий seq/year — только fallback для
+   * ещё не синхронизированной с сервером заявки. */
   private requestNumber(req: LabRequest): string {
+    if (req.customer_number) return req.customer_number;
     if (req.number_seq > 0) return `${req.number_seq}/${req.number_year}`;
     if (req.parent_id) {
       const parent = this.plugin.requestsDb.getById(req.parent_id);
-      if (parent && parent.number_seq > 0) return `${parent.number_seq}/${parent.number_year}`;
+      if (parent) {
+        if (parent.customer_number) return parent.customer_number;
+        if (parent.number_seq > 0) return `${parent.number_seq}/${parent.number_year}`;
+      }
     }
     return '—';
   }
