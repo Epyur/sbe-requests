@@ -5,6 +5,7 @@ import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { downloadBase64File } from '../../../sbe-core/src/utils/download';
 import { REQUESTS_HELP_MD, REQUESTS_HELP_PATH } from './help';
+import { buildMobileDeepLink, mobileQrDataUrl, renderMobileQr } from '../utils/mobile-link';
 
 export const SBE_REQUESTS_VIEW_TYPE = 'sbe-requests-view';
 
@@ -98,6 +99,8 @@ export class RequestsView extends ItemView {
   private selectedObjectId: number | null = null;
   private myRole = '';
   private myEmail = '';
+  /** Выбранные заявки для пакетной печати листа QR-меток (id заявки). */
+  private selectedForPrint = new Set<number>();
 
   constructor(leaf: WorkspaceLeaf, plugin: SbeRequestsPlugin) {
     super(leaf);
@@ -306,8 +309,31 @@ export class RequestsView extends ItemView {
     });
 
     // Список заявок
-    const listDiv = container.createDiv({ cls: 'tn-req-list' });
     const requests = this.filteredRequests();
+
+    // Печать листа QR для выбранных заявок (2026-08-27 — QR-этикетка на образец,
+    // сканируется на мобильном при вводе результатов, см. mobile-link.ts).
+    if (this.canEdit) {
+      const validIds = new Set(requests.map(r => r.id));
+      for (const id of Array.from(this.selectedForPrint)) if (!validIds.has(id)) this.selectedForPrint.delete(id);
+      if (this.selectedForPrint.size > 0) {
+        const printBar = container.createDiv({ cls: 'tn-req-flex tn-req-mb8' });
+        const printBtn = printBar.createEl('button', {
+          text: `🖶 Печать листа QR (${this.selectedForPrint.size})`, cls: 'tn-btn tn-btn-primary',
+        });
+        printBtn.addEventListener('click', () => {
+          const chosen = requests.filter(r => this.selectedForPrint.has(r.id));
+          this.printQrSheet(chosen);
+        });
+        const clearBtn = printBar.createEl('button', { text: '✖ Снять выбор', cls: 'tn-btn tn-btn-ghost' });
+        clearBtn.addEventListener('click', () => {
+          this.selectedForPrint.clear();
+          this.renderView();
+        });
+      }
+    }
+
+    const listDiv = container.createDiv({ cls: 'tn-req-list' });
     if (requests.length === 0) {
       const empty = listDiv.createDiv({ cls: 'tn-req-meta tn-req-p24' });
       empty.setText('Нет заявок. Нажмите «＋ Создать», чтобы создать.');
@@ -319,6 +345,15 @@ export class RequestsView extends ItemView {
       const card = listDiv.createDiv({ cls: 'tn-req-card' });
       card.addEventListener('click', () => this.renderRequestDetail(r));
       const head = card.createDiv({ cls: 'tn-req-card-head' });
+      if (this.canEdit) {
+        const cb = head.createEl('input', { attr: { type: 'checkbox' }, cls: 'tn-req-cb' });
+        cb.checked = this.selectedForPrint.has(r.id);
+        cb.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          if (cb.checked) this.selectedForPrint.add(r.id); else this.selectedForPrint.delete(r.id);
+          this.renderView();
+        });
+      }
       head.createEl('h4', { text: r.customer_number || `#${r.id}` });
       head.createSpan({ cls: 'tn-req-card-status', text: STATUS_LABELS[r.status] || r.status });
       const meta = card.createDiv({ cls: 'tn-req-card-meta' });
@@ -489,6 +524,17 @@ export class RequestsView extends ItemView {
     const statusDiv = meta.createDiv();
     statusDiv.setText(`Статус: ${STATUS_LABELS[req.status] || req.status}`);
 
+    // QR-метка на образец (2026-08-27) — тот же диплинк, что и в печатном листе
+    // (printQrSheet); показывается и здесь на случай, если этикетку нужно
+    // переклеить/распечатать заново для одной заявки.
+    const qrBlock = container.createDiv({ cls: 'tn-req-qr-block tn-req-mb12' });
+    const qrCanvas = qrBlock.createEl('canvas');
+    void renderMobileQr(qrCanvas, buildMobileDeepLink(this.app, 'request', req.id));
+    const qrInfo = qrBlock.createDiv();
+    qrInfo.createDiv({ cls: 'tn-req-meta', text: 'QR для мобильного ввода результатов' });
+    const qrPrintBtn = qrInfo.createEl('button', { text: '🖶 Печать этикетки', cls: 'tn-btn tn-btn-ghost tn-req-mt8' });
+    qrPrintBtn.addEventListener('click', () => this.printQrSheet([req]));
+
     if (req.description) {
       container.createDiv({ cls: 'tn-req-meta tn-req-mb12' }).createDiv({ text: `📝 ${req.description}` });
     }
@@ -648,6 +694,29 @@ export class RequestsView extends ItemView {
       }
     }
     return '—';
+  }
+
+  /** Печатный лист QR-меток для одной или нескольких заявок (2026-08-27) —
+   * заказчик клеит распечатанные метки на образцы; каждый QR — obsidian://
+   * диплинк на форму ввода результатов в sbe-lims-mobile (buildMobileDeepLink),
+   * без токена — доступ проверяет сервер по JWT сканирующего испытателя. Сетка
+   * меток рисуется в скрытый узел, печать — стандартный window.print() по
+   * @media print (без временных файлов, без Electron-specific API). */
+  private printQrSheet(requests: LabRequest[]): void {
+    if (requests.length === 0) return;
+    const sheet = document.body.createDiv({ cls: 'tn-req-qr-sheet' });
+    void (async () => {
+      for (const r of requests) {
+        const link = buildMobileDeepLink(this.app, 'request', r.id);
+        const dataUrl = await mobileQrDataUrl(link);
+        const label = sheet.createDiv({ cls: 'tn-req-qr-label' });
+        label.createEl('img', { attr: { src: dataUrl } });
+        label.createDiv({ cls: 'tn-req-qr-label-number', text: this.requestNumber(r) });
+        label.createDiv({ cls: 'tn-req-qr-label-title', text: this.objectName(r.object_id) || r.title });
+      }
+      window.print();
+      sheet.remove();
+    })();
   }
 
   private projectCode(projectId: number): string {
