@@ -35,6 +35,11 @@ const OBSIDIAN_VIEWABLE = new Set([
   'md', 'pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'txt', 'csv', 'html', 'htm',
 ]);
 
+/** Экранирование для вставки текста в самодельный HTML печатного листа QR (см. printQrSheet). */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 /** Ключи разделов дерева навигации (фасад, как в sbe-lims). */
 type NavKey = 'requests' | 'groups' | 'references';
 
@@ -323,7 +328,7 @@ export class RequestsView extends ItemView {
         });
         printBtn.addEventListener('click', () => {
           const chosen = requests.filter(r => this.selectedForPrint.has(r.id));
-          this.printQrSheet(chosen);
+          void this.printQrSheet(chosen);
         });
         const clearBtn = printBar.createEl('button', { text: '✖ Снять выбор', cls: 'tn-btn tn-btn-ghost' });
         clearBtn.addEventListener('click', () => {
@@ -533,7 +538,7 @@ export class RequestsView extends ItemView {
     const qrInfo = qrBlock.createDiv();
     qrInfo.createDiv({ cls: 'tn-req-meta', text: 'QR для мобильного ввода результатов' });
     const qrPrintBtn = qrInfo.createEl('button', { text: '🖶 Печать этикетки', cls: 'tn-btn tn-btn-ghost tn-req-mt8' });
-    qrPrintBtn.addEventListener('click', () => this.printQrSheet([req]));
+    qrPrintBtn.addEventListener('click', () => void this.printQrSheet([req]));
 
     if (req.description) {
       container.createDiv({ cls: 'tn-req-meta tn-req-mb12' }).createDiv({ text: `📝 ${req.description}` });
@@ -699,24 +704,67 @@ export class RequestsView extends ItemView {
   /** Печатный лист QR-меток для одной или нескольких заявок (2026-08-27) —
    * заказчик клеит распечатанные метки на образцы; каждый QR — obsidian://
    * диплинк на форму ввода результатов в sbe-lims-mobile (buildMobileDeepLink),
-   * без токена — доступ проверяет сервер по JWT сканирующего испытателя. Сетка
-   * меток рисуется в скрытый узел, печать — стандартный window.print() по
-   * @media print (без временных файлов, без Electron-specific API). */
-  private printQrSheet(requests: LabRequest[]): void {
+   * без токена — доступ проверяет сервер по JWT сканирующего испытателя.
+   *
+   * Печать делается через отдельный HTML-файл, открытый системным браузером
+   * (тот же паттерн, что downloadAndOpen/openLocalFile — shell.openPath), а НЕ
+   * через window.print() поверх DOM самого Obsidian: первая версия (скрытый
+   * узел + @media print прямо в окне Obsidian) на практике печатала пустой
+   * документ — судя по всему, у Obsidian есть собственная print-логика/CSS для
+   * экспорта заметок, которая перехватывает печать раньше наших правил.
+   * Отдельная HTML-страница в системном браузере от этого не зависит. */
+  private async printQrSheet(requests: LabRequest[]): Promise<void> {
     if (requests.length === 0) return;
-    const sheet = document.body.createDiv({ cls: 'tn-req-qr-sheet' });
-    void (async () => {
-      for (const r of requests) {
-        const link = buildMobileDeepLink(this.app, 'request', r.id);
-        const dataUrl = await mobileQrDataUrl(link);
-        const label = sheet.createDiv({ cls: 'tn-req-qr-label' });
-        label.createEl('img', { attr: { src: dataUrl } });
-        label.createDiv({ cls: 'tn-req-qr-label-number', text: this.requestNumber(r) });
-        label.createDiv({ cls: 'tn-req-qr-label-title', text: this.objectName(r.object_id) || r.title });
+    const labels: string[] = [];
+    for (const r of requests) {
+      const link = buildMobileDeepLink(this.app, 'request', r.id);
+      const dataUrl = await mobileQrDataUrl(link);
+      const number = escapeHtml(this.requestNumber(r));
+      const title = escapeHtml(this.objectName(r.object_id) || r.title);
+      labels.push(
+        `<div class="label"><img src="${dataUrl}" alt="QR"><div class="number">${number}</div>` +
+        `<div class="title">${title}</div></div>`,
+      );
+    }
+    const html = `<!DOCTYPE html>
+<html lang="ru"><head><meta charset="utf-8"><title>QR-метки заявок</title>
+<style>
+  body { font-family: sans-serif; margin: 12px; }
+  .sheet { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .label { display: flex; flex-direction: column; align-items: center; text-align: center;
+    border: 1px dashed #999; border-radius: 8px; padding: 8px; break-inside: avoid; }
+  .label img { width: 160px; height: 160px; }
+  .number { font-weight: 600; margin-top: 4px; }
+  .title { font-size: 11px; color: #444; }
+</style></head>
+<body>
+<div class="sheet">${labels.join('')}</div>
+<script>window.onload = () => window.print();</script>
+</body></html>`;
+    await this.openPrintableHtml(html, 'qr-sheet');
+  }
+
+  /** Пишет HTML в yourbase/ и открывает системным браузером (shell.openPath) —
+   * НЕ через Obsidian-встроенный просмотрщик (тот сидит в том же окне/DOM, что
+   * и сам Obsidian, с тем же риском перехвата печати). */
+  private async openPrintableHtml(html: string, baseName: string): Promise<void> {
+    try {
+      const dir = 'yourbase/sbe_requests/print';
+      const adapter = this.app.vault.adapter;
+      if (!(await adapter.exists(dir))) await adapter.mkdir(dir);
+      const path = `${dir}/${baseName}-${Date.now()}.html`;
+      await adapter.write(path, html);
+      if (!(adapter instanceof FileSystemAdapter)) {
+        new Notice(`Файл сохранён: ${path}`);
+        return;
       }
-      window.print();
-      sheet.remove();
-    })();
+      const fullPath = adapter.getFullPath(path);
+      const { shell } = require('electron');
+      const err = await shell.openPath(fullPath);
+      if (err) new Notice(`Не удалось открыть системным приложением: ${err}`);
+    } catch (e: unknown) {
+      new Notice(`Ошибка подготовки печати: ${errorMessage(e)}`);
+    }
   }
 
   private projectCode(projectId: number): string {

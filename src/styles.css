@@ -552,6 +552,9 @@
 }
 
 /* ================= QR-метки заявок (2026-08-27) ================= */
+/* Печатный лист QR — теперь отдельный HTML-файл (см. printQrSheet/
+   openPrintableHtml в requests-view.ts), стили для него зашиты прямо в файл;
+   здесь остаётся только стиль QR-блока в детали заявки. */
 
 .tn-req-qr-block {
   display: flex;
@@ -562,47 +565,4 @@
 .tn-req-qr-block canvas {
   border-radius: var(--tn-radius-sm, 8px);
   background: #fff;
-}
-
-.tn-req-qr-sheet {
-  display: none;
-}
-
-@media print {
-  body > *:not(.tn-req-qr-sheet) {
-    display: none !important;
-  }
-
-  .tn-req-qr-sheet {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    padding: 12px;
-  }
-
-  .tn-req-qr-label {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-    break-inside: avoid;
-    border: 1px dashed #999;
-    border-radius: 8px;
-    padding: 8px;
-  }
-
-  .tn-req-qr-label img {
-    width: 140px;
-    height: 140px;
-  }
-
-  .tn-req-qr-label-number {
-    font-weight: 600;
-    margin-top: 4px;
-  }
-
-  .tn-req-qr-label-title {
-    font-size: 11px;
-    color: #444;
-  }
 }
