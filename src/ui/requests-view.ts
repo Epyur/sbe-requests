@@ -5,7 +5,7 @@ import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { downloadBase64File } from '../../../sbe-core/src/utils/download';
 import { REQUESTS_HELP_MD, REQUESTS_HELP_PATH } from './help';
-import { buildMobileDeepLink, mobileQrDataUrl, renderMobileQr } from '../utils/mobile-link';
+import { mobileQrDataUrl, renderMobileQr } from '../utils/mobile-link';
 
 export const SBE_REQUESTS_VIEW_TYPE = 'sbe-requests-view';
 
@@ -529,14 +529,15 @@ export class RequestsView extends ItemView {
     const statusDiv = meta.createDiv();
     statusDiv.setText(`Статус: ${STATUS_LABELS[req.status] || req.status}`);
 
-    // QR-метка на образец (2026-08-27) — тот же диплинк, что и в печатном листе
-    // (printQrSheet); показывается и здесь на случай, если этикетку нужно
-    // переклеить/распечатать заново для одной заявки.
+    // QR-метка на образец (2026-08-27) — кодирует номер заявки (тем же текстом,
+    // что и подпись под ним), не ссылку: Obsidian mobile не имеет доступа к
+    // камере, поэтому сканирует внешнее приложение телефона, а номер из него
+    // испытатель вставляет вручную в текстовое поле sbe-lims-mobile.
     const qrBlock = container.createDiv({ cls: 'tn-req-qr-block tn-req-mb12' });
     const qrCanvas = qrBlock.createEl('canvas');
-    void renderMobileQr(qrCanvas, buildMobileDeepLink(this.app, 'request', req.id));
+    void renderMobileQr(qrCanvas, this.requestNumber(req));
     const qrInfo = qrBlock.createDiv();
-    qrInfo.createDiv({ cls: 'tn-req-meta', text: 'QR для мобильного ввода результатов' });
+    qrInfo.createDiv({ cls: 'tn-req-meta', text: 'QR с номером заявки — для мобильного ввода результатов' });
     const qrPrintBtn = qrInfo.createEl('button', { text: '🖶 Печать этикетки', cls: 'tn-btn tn-btn-ghost tn-req-mt8' });
     qrPrintBtn.addEventListener('click', () => void this.printQrSheet([req]));
 
@@ -702,9 +703,10 @@ export class RequestsView extends ItemView {
   }
 
   /** Печатный лист QR-меток для одной или нескольких заявок (2026-08-27) —
-   * заказчик клеит распечатанные метки на образцы; каждый QR — obsidian://
-   * диплинк на форму ввода результатов в sbe-lims-mobile (buildMobileDeepLink),
-   * без токена — доступ проверяет сервер по JWT сканирующего испытателя.
+   * заказчик клеит распечатанные метки на образцы; QR кодирует ПРОСТОЙ НОМЕР
+   * заявки (тем же текстом, что подпись под ним), не ссылку — Obsidian mobile
+   * не имеет доступа к камере, поэтому сканирует внешнее приложение телефона,
+   * а номер из него испытатель вставляет вручную в sbe-lims-mobile.
    *
    * Печать делается через отдельный HTML-файл, открытый системным браузером
    * (тот же паттерн, что downloadAndOpen/openLocalFile — shell.openPath), а НЕ
@@ -717,12 +719,12 @@ export class RequestsView extends ItemView {
     if (requests.length === 0) return;
     const labels: string[] = [];
     for (const r of requests) {
-      const link = buildMobileDeepLink(this.app, 'request', r.id);
-      const dataUrl = await mobileQrDataUrl(link);
-      const number = escapeHtml(this.requestNumber(r));
+      const number = this.requestNumber(r);
+      const dataUrl = await mobileQrDataUrl(number);
+      const numberHtml = escapeHtml(number);
       const title = escapeHtml(this.objectName(r.object_id) || r.title);
       labels.push(
-        `<div class="label"><img src="${dataUrl}" alt="QR"><div class="number">${number}</div>` +
+        `<div class="label"><img src="${dataUrl}" alt="QR"><div class="number">${numberHtml}</div>` +
         `<div class="title">${title}</div></div>`,
       );
     }
