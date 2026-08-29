@@ -2,7 +2,9 @@ import { requestUrl, RequestUrlParam } from 'obsidian';
 import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import type { RequestsDatabase } from '../database/requests-db';
-import type { LabRequest, ProtocolResponse, PullResponse, PushResponse, UploadFileResponse } from '../types/requests';
+import type {
+  AuditLogEntry, LabRequest, ProtocolResponse, PullResponse, PushResponse, UploadFileResponse,
+} from '../types/requests';
 
 export interface SyncResult {
   pushed: number;
@@ -479,6 +481,25 @@ export class RequestsSyncService {
     } catch (e: unknown) {
       console.warn('Заявки: не JSON в ответе file:', errorMessage(e));
       throw new Error('Сервер вернул не JSON при загрузке файла');
+    }
+  }
+
+  /** Журнал изменений заявки/результатов (2026-08-29, WP8) — смена статуса +
+   * создание/правка серий результатов, newest-first, без пагинации (см. спеку). */
+  async listAuditLog(requestId: number): Promise<AuditLogEntry[]> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/lab/requests/${requestId}/audit-log`,
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
+    try {
+      const data = JSON.parse(res.text) as { entries?: AuditLogEntry[] };
+      return Array.isArray(data.entries) ? data.entries : [];
+    } catch (e: unknown) {
+      console.warn('Заявки: не JSON в ответе audit-log:', errorMessage(e));
+      return [];
     }
   }
 

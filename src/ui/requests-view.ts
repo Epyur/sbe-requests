@@ -1,6 +1,6 @@
 import { FileSystemAdapter, ItemView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
 import type SbeRequestsPlugin from '../main';
-import type { LabObject, LabProject, LabRequest, ObjectCharacteristics } from '../types/requests';
+import type { AuditLogEntry, LabObject, LabProject, LabRequest, ObjectCharacteristics } from '../types/requests';
 import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { downloadBase64File } from '../../../sbe-core/src/utils/download';
@@ -544,6 +544,59 @@ export class RequestsView extends ItemView {
 
     if (req.description) {
       container.createDiv({ cls: 'tn-req-meta tn-req-mb12' }).createDiv({ text: `📝 ${req.description}` });
+    }
+
+    // История изменений (2026-08-29, WP8) — смена статуса + создание/правка серий
+    // результатов, newest-first, без пагинации (см. спеку). Свёрнуто по умолчанию —
+    // список грузится только по клику, не на каждый заход в карточку заявки.
+    {
+      const historyWrap = container.createDiv({ cls: 'tn-req-mb12' });
+      const historyToggle = historyWrap.createEl('button', { text: '📜 История', cls: 'tn-btn tn-btn-ghost' });
+      const historyList = historyWrap.createDiv();
+      let historyLoaded = false;
+      const formatEntry = (e: AuditLogEntry): string => {
+        const when = new Date(e.created_at).toLocaleString('ru-RU');
+        if (e.kind === 'status') {
+          return `${e.who}, ${when} — статус: ${e.old_status} → ${e.new_status}`;
+        }
+        const action = e.kind === 'result_created' ? 'создана' : 'изменена';
+        return `${e.who}, ${when} — серия ${e.series_num} (метод ${e.method_id}): ${action}`;
+      };
+      const formatValues = (v: Record<string, unknown> | undefined): string => {
+        if (!v || Object.keys(v).length === 0) return '(пусто)';
+        return Object.entries(v).map(([k, val]) => `${k}=${JSON.stringify(val)}`).join(', ');
+      };
+      historyToggle.addEventListener('click', () => {
+        if (historyLoaded) {
+          historyList.style.display = historyList.style.display === 'none' ? '' : 'none';
+          return;
+        }
+        historyLoaded = true;
+        historyList.setText('Загрузка…');
+        this.plugin.syncService.listAuditLog(req.id).then(entries => {
+          historyList.empty();
+          if (entries.length === 0) {
+            historyList.createDiv({ cls: 'tn-req-meta', text: 'Пока пусто' });
+            return;
+          }
+          for (const e of entries) {
+            const row = historyList.createDiv({ cls: 'tn-req-meta' });
+            row.createSpan({ text: formatEntry(e) });
+            if (e.kind !== 'status') {
+              const detailsBtn = row.createEl('button', { text: 'подробнее', cls: 'tn-btn tn-btn-ghost' });
+              const details = historyList.createDiv({ cls: 'tn-req-meta' });
+              details.style.display = 'none';
+              details.createDiv({ text: `До: ${formatValues(e.values_before)}` });
+              details.createDiv({ text: `После: ${formatValues(e.values_after)}` });
+              detailsBtn.addEventListener('click', () => {
+                details.style.display = details.style.display === 'none' ? '' : 'none';
+              });
+            }
+          }
+        }).catch((e: unknown) => {
+          historyList.setText(`Ошибка: ${errorMessage(e)}`);
+        });
+      });
     }
 
     if (req.method_id > 0) {

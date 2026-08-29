@@ -215,3 +215,22 @@ export interface ProtocolResponse {
   docx_base64: string;
   generated_at: string;
 }
+
+/** Одна строка журнала изменений заявки/результатов (2026-08-29, WP8) — зеркало
+ * sbe-lims/src/types/lims.ts AuditLogEntry. Узкий охват: смена статуса заявки +
+ * создание/правка серий результатов (полный снимок values до/после). Поля
+ * старого/нового статуса ИЛИ метода/серии/снимков — заполнены в зависимости от
+ * `kind`. */
+export interface AuditLogEntry {
+  id: number;
+  request_id: number;
+  kind: 'status' | 'result_created' | 'result_updated';
+  who: string;
+  created_at: string;
+  old_status?: string;
+  new_status?: string;
+  method_id?: number;
+  series_num?: number;
+  values_before?: Record<string, unknown>;
+  values_after?: Record<string, unknown>;
+}
