@@ -16,10 +16,6 @@ const STATUS_LABELS: Record<string, string> = {
   completed: '✅ Завершена',
 };
 
-/** Префикс legacy-номера трекера почты (LIMS_LPI); requests.external_id хранит
- * только числовую часть — префикс восстанавливается для отображения. */
-const EXTERNAL_ID_PREFIX = 'LPIZAYAVKINAPRO-';
-
 /** Код метода → поле группы пожарной классификации в QRC
  * (groups.fire_characteristics.<field>.value, см. sync.service.getEknProduct) —
  * чем предзаполняется «Целевой показатель» для методов, где QRC хранит цель
@@ -359,7 +355,9 @@ export class RequestsView extends ItemView {
           this.renderView();
         });
       }
-      head.createEl('h4', { text: r.customer_number || `#${r.id}` });
+      // external_id в скобках рядом с номером (2026-08-29, прямой запрос
+      // пользователя) — быстро сверять заявку со внешним номером в списке.
+      head.createEl('h4', { text: `${r.customer_number || `#${r.id}`}${r.external_id ? ` (${r.external_id})` : ''}` });
       head.createSpan({ cls: 'tn-req-card-status', text: STATUS_LABELS[r.status] || r.status });
       const meta = card.createDiv({ cls: 'tn-req-card-meta' });
       meta.createSpan({ text: `🧪 ${this.methodName(r.method_id)}` });
@@ -508,12 +506,15 @@ export class RequestsView extends ItemView {
     container.createEl('h3', { text: this.objectName(req.object_id) || req.title });
 
     const meta = container.createDiv({ cls: 'tn-req-meta tn-req-mb12' });
-    meta.createDiv({ text: `№ ${this.requestNumber(req)}` });
+    // external_id в скобках рядом с номером (2026-08-29, прямой запрос
+    // пользователя — быстро сверять заявку с внешним номером в карточке/
+    // списках, не заглядывая в отдельную строку). Заменяет прежнюю отдельную
+    // строку «Внешний идентификатор» — та же информация, компактнее.
+    meta.createDiv({ text: `№ ${this.requestNumber(req)}${req.external_id ? ` (${req.external_id})` : ''}` });
     meta.createDiv({ text: `📁 Проект: ${this.projectName(req.project_id)}` });
     meta.createDiv({ text: `👥 Группа: ${this.groupName(req.group_id)}` });
     meta.createDiv({ text: `🔬 Объект: ${this.objectName(req.object_id)}` });
     if (req.ekn) meta.createDiv({ text: `🔢 ЕКН: ${req.ekn}` });
-    if (req.external_id) meta.createDiv({ text: `📧 Внешний идентификатор: ${EXTERNAL_ID_PREFIX}${req.external_id}` });
     const obj = this.plugin.requestsDb.getObjects().find(o => o.id === req.object_id);
     const chars = obj?.characteristics;
     if (chars) {
