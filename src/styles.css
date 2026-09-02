@@ -297,6 +297,12 @@
   font-weight: 600;
 }
 
+.tn-req-hint {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 .tn-req-flex {
   display: flex;
   align-items: center;

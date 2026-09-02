@@ -85,6 +85,13 @@ export interface LabProject {
   is_ekn: boolean;
   group_id: number;
   owner_email: string;
+  /** Триггеры почтового приёма (2026-09-02): заявка без своего ЕКН-автопроекта,
+   * поступившая по почте, попадает в этот проект, если её ЕКН совпал с
+   * mail_trigger_ekn или отправитель/домен — с mail_trigger_sender (значение
+   * вида "@company.ru" — суффиксное совпадение домена, иначе точный email).
+   * Пусто у обоих — проект вне авто-маршрутизации почты (обычный ручной). */
+  mail_trigger_ekn: string;
+  mail_trigger_sender: string;
   created_at: string;
   updated_at: string;
 }

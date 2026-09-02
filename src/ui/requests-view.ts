@@ -380,9 +380,13 @@ export class RequestsView extends ItemView {
         roots.push(p);
       }
     }
-    const sortByName = (list: LabProject[]): LabProject[] =>
-      [...list].sort((a, b) => (a.name || a.code).localeCompare(b.name || b.code));
-    for (const p of sortByName(roots)) childrenOf.set(p.id, sortByName(childrenOf.get(p.id) || []));
+    // Сначала новые, потом старые — общий принцип сортировки списков (2026-09-02,
+    // прямой запрос пользователя); было по алфавиту названия, что для дерева,
+    // растущего каждый день, выглядело как "непонятный порядок".
+    const sortByNewest = (list: LabProject[]): LabProject[] =>
+      [...list].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const sortedRoots = sortByNewest(roots);
+    for (const p of sortedRoots) childrenOf.set(p.id, sortByNewest(childrenOf.get(p.id) || []));
 
     const item = (label: string, projectId: number, depth: number, isRoot: boolean): void => {
       const row = container.createDiv({ cls: 'tn-req-tree-item' });
@@ -409,7 +413,7 @@ export class RequestsView extends ItemView {
     };
 
     item('🗂 Без проекта', 0, 0, true);
-    for (const root of roots) {
+    for (const root of sortedRoots) {
       item(`${root.code}${root.name ? ' — ' + root.name : ''}`, root.id, 0, true);
       this.renderSubtree(childrenOf, root.id, 1, item);
     }
@@ -1626,6 +1630,17 @@ export class RequestsView extends ItemView {
       groupSelect.createEl('option', { value: String(g.id), text: g.name });
     }
 
+    container.createEl('h4', { text: 'Источник — почта (авто-маршрутизация писем)' });
+    container.createEl('p', {
+      text: 'Заявка, пришедшая по почте без своего ЕКН-автопроекта, попадёт в этот проект, '
+        + 'если совпадёт хотя бы одно условие ниже. Пусто — проект не участвует в автоматическом распределении почты.',
+      cls: 'tn-req-hint',
+    });
+    const triggerEknLabel = container.createEl('label', { text: 'Триггер: точный ЕКН образца', cls: 'tn-req-label' });
+    const triggerEknInput = container.createEl('input', { attr: { type: 'text', placeholder: 'Например: 123456' }, cls: 'tn-req-input' });
+    const triggerSenderLabel = container.createEl('label', { text: 'Триггер: отправитель или домен', cls: 'tn-req-label' });
+    const triggerSenderInput = container.createEl('input', { attr: { type: 'text', placeholder: 'user@company.ru или @company.ru' }, cls: 'tn-req-input' });
+
     const btnRow = container.createDiv({ cls: 'tn-req-header tn-req-mt12' });
     const saveBtn = btnRow.createEl('button', { text: '💾 Создать проект', cls: 'tn-btn tn-btn-primary' });
     const cancelBtn = btnRow.createEl('button', { text: 'Отмена', cls: 'tn-btn tn-btn-ghost' });
@@ -1644,6 +1659,8 @@ export class RequestsView extends ItemView {
           description: descInput.value.trim(),
           is_ekn: eknCb.checked,
           group_id: Number(groupSelect.value),
+          mail_trigger_ekn: triggerEknInput.value.trim(),
+          mail_trigger_sender: triggerSenderInput.value.trim(),
         });
         new Notice('Проект создан');
         await this.syncAndRender();
@@ -1676,6 +1693,18 @@ export class RequestsView extends ItemView {
     const codeInput = container.createEl('input', { attr: { type: 'text', placeholder: 'Например: ЕКН-2026-001' }, cls: 'tn-req-input' });
     codeInput.value = project.code;
 
+    // Смена родительского проекта (2026-09-02) — раньше parent_id задавался только
+    // при создании; сервер защищён от цикла (project_id/потомки), см. lab-service
+    // projects.go handleUpdateProject.
+    const parentLabel = container.createEl('label', { text: 'Родительский проект (для подпроекта)', cls: 'tn-req-label' });
+    const parentSelect = container.createEl('select', { cls: 'tn-req-select' });
+    parentSelect.createEl('option', { value: '0', text: '— Корневой проект —' });
+    for (const p of this.plugin.requestsDb.getProjects()) {
+      if (p.id === project.id) continue;
+      parentSelect.createEl('option', { value: String(p.id), text: `${p.code}${p.name ? ' — ' + p.name : ''}` });
+    }
+    parentSelect.value = String(project.parent_id || 0);
+
     const groupLabel = container.createEl('label', { text: 'Группа (видимость)', cls: 'tn-req-label' });
     const groupSelect = container.createEl('select', { cls: 'tn-req-select' });
     groupSelect.createEl('option', { value: '0', text: '— Публичный —' });
@@ -1683,6 +1712,19 @@ export class RequestsView extends ItemView {
       groupSelect.createEl('option', { value: String(g.id), text: g.name });
     }
     groupSelect.value = String(project.group_id || 0);
+
+    container.createEl('h4', { text: 'Источник — почта (авто-маршрутизация писем)' });
+    container.createEl('p', {
+      text: 'Заявка, пришедшая по почте без своего ЕКН-автопроекта, попадёт в этот проект, '
+        + 'если совпадёт хотя бы одно условие ниже. Пусто — проект не участвует в автоматическом распределении почты.',
+      cls: 'tn-req-hint',
+    });
+    const triggerEknLabel = container.createEl('label', { text: 'Триггер: точный ЕКН образца', cls: 'tn-req-label' });
+    const triggerEknInput = container.createEl('input', { attr: { type: 'text', placeholder: 'Например: 123456' }, cls: 'tn-req-input' });
+    triggerEknInput.value = project.mail_trigger_ekn || '';
+    const triggerSenderLabel = container.createEl('label', { text: 'Триггер: отправитель или домен', cls: 'tn-req-label' });
+    const triggerSenderInput = container.createEl('input', { attr: { type: 'text', placeholder: 'user@company.ru или @company.ru' }, cls: 'tn-req-input' });
+    triggerSenderInput.value = project.mail_trigger_sender || '';
 
     const btnRow = container.createDiv({ cls: 'tn-req-header tn-req-mt12' });
     const saveBtn = btnRow.createEl('button', { text: '💾 Сохранить', cls: 'tn-btn tn-btn-primary' });
@@ -1700,6 +1742,9 @@ export class RequestsView extends ItemView {
           name: nameInput.value.trim(),
           description: descInput.value.trim(),
           group_id: Number(groupSelect.value),
+          parent_id: Number(parentSelect.value),
+          mail_trigger_ekn: triggerEknInput.value.trim(),
+          mail_trigger_sender: triggerSenderInput.value.trim(),
         });
         new Notice('Проект обновлён');
         await this.syncAndRender();

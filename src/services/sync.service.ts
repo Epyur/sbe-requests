@@ -254,7 +254,10 @@ export class RequestsSyncService {
   }
 
   /** Создаёт проект/подпроект (editor). Возвращает id. */
-  async createProject(data: { parent_id: number; code: string; name: string; description: string; is_ekn: boolean; group_id: number }): Promise<number> {
+  async createProject(data: {
+    parent_id: number; code: string; name: string; description: string; is_ekn: boolean; group_id: number;
+    mail_trigger_ekn: string; mail_trigger_sender: string;
+  }): Promise<number> {
     const token = await this.getToken();
     const res = await this.request({
       url: `${this.baseUrl}/api/lab/projects`,
@@ -272,8 +275,12 @@ export class RequestsSyncService {
     }
   }
 
-  /** Обновляет проект/подпроект (владелец/admin). Пустые поля не меняются на сервере. */
-  async updateProject(id: number, data: { code?: string; name?: string; description?: string; group_id?: number }): Promise<void> {
+  /** Обновляет проект/подпроект (владелец/admin). Пустые поля не меняются на сервере
+   * (кроме description/mail_trigger_*, которые перезаписываются как есть). */
+  async updateProject(id: number, data: {
+    code?: string; name?: string; description?: string; group_id?: number; parent_id?: number;
+    mail_trigger_ekn?: string; mail_trigger_sender?: string;
+  }): Promise<void> {
     const token = await this.getToken();
     const res = await this.request({
       url: `${this.baseUrl}/api/lab/projects/${id}`,
