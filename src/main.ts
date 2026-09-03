@@ -47,8 +47,8 @@ export default class SbeRequestsPlugin extends Plugin {
 
     if (this.settings.lastAnnouncedVersion !== this.manifest.version) {
       void this.announceUpdateSafely(
-        'В карточке заявки теперь показываются результаты испытания — по смысловым разделам, ' +
-        'как в ЛИМС. Раньше результаты здесь вообще не отображались.',
+        'Исправлена ошибка: после открытия конкретного проекта пункт «Все заявки» мог ' +
+        'продолжать показывать только тот же проект вместо всех заявок.',
       );
     }
   }

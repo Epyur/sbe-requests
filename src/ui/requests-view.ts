@@ -211,6 +211,17 @@ export class RequestsView extends ItemView {
         a.addEventListener('click', (ev) => {
           ev.preventDefault();
           this.key = item.key;
+          // «Все заявки» из верхнего меню — сброс фильтров по проекту/объекту
+          // (2026-09-03, жалоба пользователя): раньше клик по проекту в дереве
+          // слева оставлял selectedProjectId выставленным навсегда, и «Все
+          // заявки» после этого молча продолжал показывать только тот проект
+          // (обычно первый в дереве, например OLD), а не реально все заявки.
+          // selectedObjectId (переход из справочника «Объекты» — showRequestsForObject)
+          // подвержен той же проблеме, сбрасываем заодно.
+          if (item.key === 'requests') {
+            this.selectedProjectId = null;
+            this.selectedObjectId = null;
+          }
           this.syncNavActive();
           void this.renderPage();
         });
