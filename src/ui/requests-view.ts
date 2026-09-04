@@ -112,6 +112,9 @@ export class RequestsView extends ItemView {
   private filterIdentifier = '';
   private filterBatch = '';
   private filterOwnerEmail = '';
+  /** 'all' | 'active' (new/processing) | 'completed' — 2026-09-04, прямой запрос
+   * пользователя. */
+  private filterStatus: 'all' | 'active' | 'completed' = 'all';
   private filterTimeout: number | null = null;
   private myRole = '';
   private myEmail = '';
@@ -377,6 +380,18 @@ export class RequestsView extends ItemView {
       this.renderView();
     });
 
+    const statusGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
+    statusGroup.createEl('label', { text: 'Статус', cls: 'tn-req-filter-lbl' });
+    const statusSelect = statusGroup.createEl('select', { cls: 'tn-req-select' });
+    statusSelect.createEl('option', { value: 'all', text: 'Все' });
+    statusSelect.createEl('option', { value: 'active', text: 'Активные' });
+    statusSelect.createEl('option', { value: 'completed', text: 'Завершённые' });
+    statusSelect.value = this.filterStatus;
+    statusSelect.addEventListener('change', () => {
+      this.filterStatus = statusSelect.value as 'all' | 'active' | 'completed';
+      this.renderView();
+    });
+
     const objNameGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
     objNameGroup.createEl('label', { text: 'Название объекта', cls: 'tn-req-filter-lbl' });
     const objNameInput = objNameGroup.createEl('input', { attr: { type: 'text', placeholder: 'Название объекта' }, cls: 'tn-req-input' });
@@ -420,6 +435,7 @@ export class RequestsView extends ItemView {
       this.filterDateFrom = '';
       this.filterDateTo = '';
       this.filterMethodId = null;
+      this.filterStatus = 'all';
       this.filterObjectName = '';
       this.filterIdentifier = '';
       this.filterBatch = '';
@@ -526,6 +542,11 @@ export class RequestsView extends ItemView {
             ev.stopPropagation();
             this.showEditProjectForm(proj);
           });
+          const deleteBtn = row.createEl('button', { text: '🗑', cls: 'tn-btn tn-btn-ghost tn-req-btn-sm tn-req-tree-delete' });
+          deleteBtn.addEventListener('click', (ev) => {
+            ev.stopPropagation();
+            void this.deleteProject(proj);
+          });
         }
       }
     };
@@ -547,6 +568,23 @@ export class RequestsView extends ItemView {
     for (const k of kids) {
       item(`${k.code}${k.name ? ' — ' + k.name : ''}`, k.id, depth, false);
       this.renderSubtree(childrenOf, k.id, depth + 1, item);
+    }
+  }
+
+  /** Удаление проекта (владелец/admin, кнопка 🗑 в дереве, 2026-09-04). Сервер
+   * блокирует удаление 409 с русским сообщением, если на проект ещё ссылаются
+   * заявки/подпроекты (см. lab-service projects.go handleDeleteProject) —
+   * errorMessage(e) прокидывает этот текст как есть, а не общее "Ошибка". */
+  private async deleteProject(proj: LabProject): Promise<void> {
+    const label = `${proj.code}${proj.name ? ' — ' + proj.name : ''}`;
+    if (!window.confirm(`Удалить проект «${label}»? Действие необратимо.`)) return;
+    try {
+      await this.plugin.syncService.deleteProject(proj.id);
+      new Notice('Проект удалён');
+      if (this.selectedProjectId === proj.id) this.selectedProjectId = null;
+      await this.syncAndRender();
+    } catch (e: unknown) {
+      new Notice(`Ошибка: ${errorMessage(e)}`);
     }
   }
 
@@ -575,6 +613,11 @@ export class RequestsView extends ItemView {
     }
     if (this.filterMethodId !== null) {
       requests = requests.filter(r => r.method_id === this.filterMethodId);
+    }
+    if (this.filterStatus === 'active') {
+      requests = requests.filter(r => r.status !== 'completed');
+    } else if (this.filterStatus === 'completed') {
+      requests = requests.filter(r => r.status === 'completed');
     }
     const objNameQ = this.filterObjectName.trim().toLowerCase();
     if (objNameQ) requests = requests.filter(r => this.objectName(r.object_id).toLowerCase().includes(objNameQ));
@@ -1927,6 +1970,24 @@ export class RequestsView extends ItemView {
       cardHeader.createEl('strong', { text: g.name });
       cardHeader.createDiv({ cls: 'tn-req-meta' }).setText(`Владелец: ${g.owner_email}`);
       const isOwner = g.owner_email === this.myEmail || this.isAdmin;
+      if (isOwner) {
+        // Удаление группы (2026-09-04) — сервер блокирует 409 с русским
+        // сообщением, если на группу ещё ссылаются заявки/проекты (см.
+        // lab-service groups.go handleDeleteGroup); group_members не блокирует
+        // (каскадируется на сервере).
+        const deleteGroupBtn = cardHeader.createEl('button', { text: '🗑 Удалить группу', cls: 'tn-btn tn-btn-ghost tn-req-btn-sm' });
+        deleteGroupBtn.addEventListener('click', async () => {
+          if (!window.confirm(`Удалить группу «${g.name}»? Действие необратимо.`)) return;
+          try {
+            await this.plugin.syncService.deleteGroup(g.id);
+            new Notice('Группа удалена');
+            await this.syncAndRender();
+            this.renderGroupsView();
+          } catch (e: unknown) {
+            new Notice(`Ошибка: ${errorMessage(e)}`);
+          }
+        });
+      }
 
       const mTable = card.createEl('table', { cls: 'tn-table' });
       const mThead = mTable.createEl('thead');

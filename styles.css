@@ -917,6 +917,20 @@
   opacity: 1;
 }
 
+.tn-req-tree-delete {
+  float: right;
+  margin-left: 6px;
+  font-size: var(--font-smallest);
+  line-height: 1;
+  padding: 1px 4px;
+  opacity: 0.55;
+}
+
+.tn-req-tree-delete:hover {
+  opacity: 1;
+  color: var(--text-error);
+}
+
 /* Заявка в списке (renderView) — карточка вместо таблицы, тот же паттерн, что
  * .tn-task-card в sbe-tasks: кликабельна целиком, hover меняет цвет рамки. */
 .tn-req-card {

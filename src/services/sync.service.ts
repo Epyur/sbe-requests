@@ -291,6 +291,19 @@ export class RequestsSyncService {
     this.assertOk(res);
   }
 
+  /** Удаляет проект/подпроект (владелец/admin). Сервер отвечает 409 с русским
+   * сообщением, если на проект ещё ссылаются заявки или подпроекты —
+   * assertOk() уже прокидывает текст ошибки сервера, не только код. */
+  async deleteProject(id: number): Promise<void> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/lab/projects/${id}`,
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
+  }
+
   /** Создаёт группу (editor). Возвращает id. */
   async createGroup(name: string): Promise<number> {
     const token = await this.getToken();
@@ -327,6 +340,18 @@ export class RequestsSyncService {
     const token = await this.getToken();
     const res = await this.request({
       url: `${this.baseUrl}/api/lab/groups/${groupId}/members/${encodeURIComponent(email)}`,
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    this.assertOk(res);
+  }
+
+  /** Удаляет группу (владелец/admin). Сервер отвечает 409 с русским сообщением,
+   * если на группу ещё ссылаются заявки или проекты — см. deleteProject. */
+  async deleteGroup(id: number): Promise<void> {
+    const token = await this.getToken();
+    const res = await this.request({
+      url: `${this.baseUrl}/api/lab/groups/${id}`,
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     });
