@@ -98,6 +98,21 @@ export class RequestsView extends ItemView {
    * объединения дублей объектов, 2026-08-21: у одного объекта может быть
    * много заявок. null — фильтр выключен. */
   private selectedObjectId: number | null = null;
+  // ---- Панель фильтров (2026-09-04, прямой запрос пользователя) — отдельные
+  // поля по категориям в дополнение к свободному searchQuery (тот матчит
+  // название/объект). Каждый фильтр активен, только если не пуст; активные
+  // фильтры комбинируются по И (см. filteredRequests). filterTimeout — общий
+  // дебаунс-таймер для всех текстовых полей панели (тот же паттерн, что
+  // searchTimeout у searchQuery).
+  private filterDateFrom = '';
+  private filterDateTo = '';
+  /** null — фильтр по методу выключен. */
+  private filterMethodId: number | null = null;
+  private filterObjectName = '';
+  private filterIdentifier = '';
+  private filterBatch = '';
+  private filterOwnerEmail = '';
+  private filterTimeout: number | null = null;
   private myRole = '';
   private myEmail = '';
   /** Выбранные заявки для пакетной печати листа QR-меток (id заявки). */
@@ -320,6 +335,98 @@ export class RequestsView extends ItemView {
       this.searchTimeout = window.setTimeout(() => this.renderView(), 400);
     });
 
+    // Панель фильтров (2026-09-04, прямой запрос пользователя) — отдельные
+    // поля по категориям вместо одного общего текстового поля; активные
+    // фильтры комбинируются по И (см. filteredRequests).
+    const scheduleFilterRerender = (): void => {
+      if (this.filterTimeout) window.clearTimeout(this.filterTimeout);
+      // 1200мс (х3 от исходных 400) — по просьбе пользователя, не успевал
+      // набрать текст в полях фильтра до перерисовки.
+      this.filterTimeout = window.setTimeout(() => this.renderView(), 1200);
+    };
+
+    const filterBar = container.createDiv({ cls: 'tn-req-filterbar tn-req-mb8' });
+
+    const dateGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
+    dateGroup.createEl('label', { text: 'Дата', cls: 'tn-req-filter-lbl' });
+    const dateRow = dateGroup.createDiv({ cls: 'tn-req-filter-daterow' });
+    const dateFromInput = dateRow.createEl('input', { attr: { type: 'date' }, cls: 'tn-req-input' });
+    dateFromInput.value = this.filterDateFrom;
+    dateRow.createSpan({ cls: 'tn-req-filter-date-sep', text: '—' });
+    const dateToInput = dateRow.createEl('input', { attr: { type: 'date' }, cls: 'tn-req-input' });
+    dateToInput.value = this.filterDateTo;
+    dateFromInput.addEventListener('change', () => {
+      this.filterDateFrom = dateFromInput.value;
+      this.renderView();
+    });
+    dateToInput.addEventListener('change', () => {
+      this.filterDateTo = dateToInput.value;
+      this.renderView();
+    });
+
+    const methodGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
+    methodGroup.createEl('label', { text: 'Метод', cls: 'tn-req-filter-lbl' });
+    const methodSelect = methodGroup.createEl('select', { cls: 'tn-req-select' });
+    methodSelect.createEl('option', { value: '', text: '— Все —' });
+    for (const m of this.plugin.requestsDb.getMethods()) {
+      methodSelect.createEl('option', { value: String(m.id), text: `${m.code}${m.name ? ' — ' + m.name : ''}` });
+    }
+    methodSelect.value = this.filterMethodId !== null ? String(this.filterMethodId) : '';
+    methodSelect.addEventListener('change', () => {
+      this.filterMethodId = methodSelect.value ? Number(methodSelect.value) : null;
+      this.renderView();
+    });
+
+    const objNameGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
+    objNameGroup.createEl('label', { text: 'Название объекта', cls: 'tn-req-filter-lbl' });
+    const objNameInput = objNameGroup.createEl('input', { attr: { type: 'text', placeholder: 'Название объекта' }, cls: 'tn-req-input' });
+    objNameInput.value = this.filterObjectName;
+    objNameInput.addEventListener('input', () => {
+      this.filterObjectName = objNameInput.value;
+      scheduleFilterRerender();
+    });
+
+    const idGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
+    idGroup.createEl('label', { text: 'Идентификатор', cls: 'tn-req-filter-lbl' });
+    const idInput = idGroup.createEl('input', {
+      attr: { type: 'text', placeholder: '№ заказчику / лаборатории / внешний / ID' }, cls: 'tn-req-input',
+    });
+    idInput.value = this.filterIdentifier;
+    idInput.addEventListener('input', () => {
+      this.filterIdentifier = idInput.value;
+      scheduleFilterRerender();
+    });
+
+    const batchGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
+    batchGroup.createEl('label', { text: 'Партия', cls: 'tn-req-filter-lbl' });
+    const batchInput = batchGroup.createEl('input', { attr: { type: 'text', placeholder: 'Номер партии' }, cls: 'tn-req-input' });
+    batchInput.value = this.filterBatch;
+    batchInput.addEventListener('input', () => {
+      this.filterBatch = batchInput.value;
+      scheduleFilterRerender();
+    });
+
+    const ownerGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
+    ownerGroup.createEl('label', { text: 'Заказчик', cls: 'tn-req-filter-lbl' });
+    const ownerInput = ownerGroup.createEl('input', { attr: { type: 'text', placeholder: 'Email заказчика' }, cls: 'tn-req-input' });
+    ownerInput.value = this.filterOwnerEmail;
+    ownerInput.addEventListener('input', () => {
+      this.filterOwnerEmail = ownerInput.value;
+      scheduleFilterRerender();
+    });
+
+    const resetBtn = filterBar.createEl('button', { text: '✖ Сбросить фильтры', cls: 'tn-btn tn-btn-ghost tn-req-filter-reset' });
+    resetBtn.addEventListener('click', () => {
+      this.filterDateFrom = '';
+      this.filterDateTo = '';
+      this.filterMethodId = null;
+      this.filterObjectName = '';
+      this.filterIdentifier = '';
+      this.filterBatch = '';
+      this.filterOwnerEmail = '';
+      this.renderView();
+    });
+
     // Список заявок
     const requests = this.filteredRequests();
 
@@ -456,6 +563,35 @@ export class RequestsView extends ItemView {
     if (this.selectedObjectId !== null) {
       requests = requests.filter(r => r.object_id === this.selectedObjectId);
     }
+    // Панель фильтров (2026-09-04) — все активные (непустые) поля комбинируются
+    // по И, независимо от searchQuery/selectedProjectId/selectedObjectId выше.
+    if (this.filterDateFrom) {
+      const fromMs = new Date(`${this.filterDateFrom}T00:00:00`).getTime();
+      requests = requests.filter(r => new Date(r.created_at).getTime() >= fromMs);
+    }
+    if (this.filterDateTo) {
+      const toMs = new Date(`${this.filterDateTo}T23:59:59.999`).getTime();
+      requests = requests.filter(r => new Date(r.created_at).getTime() <= toMs);
+    }
+    if (this.filterMethodId !== null) {
+      requests = requests.filter(r => r.method_id === this.filterMethodId);
+    }
+    const objNameQ = this.filterObjectName.trim().toLowerCase();
+    if (objNameQ) requests = requests.filter(r => this.objectName(r.object_id).toLowerCase().includes(objNameQ));
+    const idQ = this.filterIdentifier.trim().toLowerCase();
+    if (idQ) requests = requests.filter(r =>
+      r.customer_number.toLowerCase().includes(idQ) ||
+      r.lab_number.toLowerCase().includes(idQ) ||
+      r.external_id.toLowerCase().includes(idQ) ||
+      String(r.id).includes(idQ));
+    const batchQ = this.filterBatch.trim().toLowerCase();
+    if (batchQ) requests = requests.filter(r => {
+      const obj = this.plugin.requestsDb.getObjects().find(o => o.id === r.object_id);
+      const batch = obj?.characteristics?.batch_number;
+      return batch !== undefined && String(batch).toLowerCase().includes(batchQ);
+    });
+    const ownerQ = this.filterOwnerEmail.trim().toLowerCase();
+    if (ownerQ) requests = requests.filter(r => r.owner_email.toLowerCase().includes(ownerQ));
     return requests;
   }
 

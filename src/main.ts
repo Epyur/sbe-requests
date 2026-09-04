@@ -47,8 +47,8 @@ export default class SbeRequestsPlugin extends Plugin {
 
     if (this.settings.lastAnnouncedVersion !== this.manifest.version) {
       void this.announceUpdateSafely(
-        'Исправлена ошибка: после открытия конкретного проекта пункт «Все заявки» мог ' +
-        'продолжать показывать только тот же проект вместо всех заявок.',
+        'В список заявок добавлена панель фильтров: можно искать заявки по дате, ' +
+        'методу, названию объекта, идентификатору, номеру партии и заказчику.',
       );
     }
   }

@@ -818,6 +818,56 @@
   min-width: 0;
 }
 
+/* Панель фильтров списка заявок (2026-09-04) — отдельные поля по категориям
+ * (дата/метод/название объекта/идентификатор/партия/заказчик), в дополнение к
+ * свободному текстовому поиску выше (searchInput). Те же токены дизайн-системы
+ * SBE, что и у карточек заявок (--tn-card/--tn-border/--tn-radius). */
+.tn-req-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  background: var(--tn-card);
+  border: 1px solid var(--tn-border);
+  border-radius: var(--tn-radius);
+  padding: 12px 14px;
+}
+
+.tn-req-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 150px;
+  min-width: 150px;
+}
+
+.tn-req-filter-lbl {
+  font-size: var(--font-smaller);
+  font-weight: 600;
+  color: var(--tn-muted);
+}
+
+.tn-req-filter-daterow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tn-req-filter-daterow .tn-req-input {
+  min-width: 0;
+  flex: 1;
+}
+
+.tn-req-filter-date-sep {
+  color: var(--tn-muted);
+  flex-shrink: 0;
+}
+
+.tn-req-filter-reset {
+  white-space: nowrap;
+  align-self: flex-end;
+}
+
 .tn-req-tree-item {
   cursor: pointer;
   padding: 4px 8px;
