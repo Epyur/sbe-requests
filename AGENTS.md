@@ -704,7 +704,7 @@ Obsidian (скрытый узел + `@media print`, надеясь спрята�
   - `PushRequest` += `client_id` (локальный id клиента);
   - `pushCreate` возвращает полную созданную заявку (`*Request`); `handlePush` отвечает
     `{"inserted", "updated", "created": [{client_id, request}]}`.
-  - Залит на VDS `/opt/mailers/lab-service/sync.go` (md5 `184744af...`), контейнер `lab`
+  - Залит на сервер в `lab-service/sync.go` (md5 `184744af...`), контейнер `lab`
     пересобран (`docker compose up -d --build lab`, recreate OK).
 - **Фикс (плагин)**:
   - `push()`: новые заявки (`number_seq === 0`) уходят с `id: 0` и `client_id: r.id`;
