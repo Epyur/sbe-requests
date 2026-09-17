@@ -1,10 +1,12 @@
-import { FileSystemAdapter, ItemView, Notice, TFile, WorkspaceLeaf } from 'obsidian';
+import { FileSystemAdapter, ItemView, Notice, WorkspaceLeaf } from 'obsidian';
 import type SbeRequestsPlugin from '../main';
 import type { AuditLogEntry, LabObject, LabProject, LabRequest, ObjectCharacteristics } from '../types/requests';
 import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { downloadBase64File } from '../../../sbe-core/src/utils/download';
-import { REQUESTS_HELP_MD, REQUESTS_HELP_PATH } from './help';
+import { sortRequestsForList } from '../../../sbe-core/src/utils/request-sort';
+import { renderHelpButton } from '../../../sbe-core/src/ui/help-modal';
+import { REQUESTS_HELP } from './help';
 import { mobileQrDataUrl, renderMobileQr } from '../utils/mobile-link';
 
 export const SBE_REQUESTS_VIEW_TYPE = 'sbe-requests-view';
@@ -197,11 +199,16 @@ export class RequestsView extends ItemView {
     syncBtn.createSpan({ text: '🔄' });
     syncBtn.createSpan({ cls: 'tn-req-nav-lbl', text: 'Синхронизация' });
     syncBtn.addEventListener('click', () => { void this.syncAndRender(); });
-    const helpBtn = actions.createEl('button', { cls: 'tn-req-nav-action' });
-    helpBtn.createSpan({ text: '?' });
-    helpBtn.createSpan({ cls: 'tn-req-nav-lbl', text: 'Справка' });
-    helpBtn.setAttr('title', 'Инструкция по заполнению заявок');
-    helpBtn.addEventListener('click', () => { void this.openHelp(); });
+    // «Справка» — последним пунктом сайдбара, общее окно sbe-core (2026-09-17,
+    // как в Фотобанке, Письмах и Документах). Раньше кнопка создавала заметку в
+    // вольте — та отставала от версии плагина и у каждого была своя.
+    renderHelpButton({
+      container: actions,
+      app: this.app,
+      cls: 'tn-req-nav-action',
+      labelCls: 'tn-req-nav-lbl',
+      help: REQUESTS_HELP,
+    });
 
     const content = main.createDiv({ cls: 'tn-req-content' });
     this.pageTitleEl = content.createEl('h1', { cls: 'tn-req-page-title' });
@@ -475,8 +482,14 @@ export class RequestsView extends ItemView {
       return;
     }
 
-    requests.sort((a, b) => (b.number_year - a.number_year) || (b.number_seq - a.number_seq));
-    for (const r of requests) {
+    // Порядок — общее правило всех приложений (2026-09-17, см.
+    // sbe-core/src/utils/request-sort.ts): без фильтра — по дате поступления,
+    // «Активные» — сперва «В работе», затем «Принята», затем остальные,
+    // «Завершённые» — по дате закрытия. Раньше список шёл по номеру
+    // (number_year + number_seq), который зависит от года и лаборатории и с
+    // реальным порядком поступления совпадает не всегда.
+    const ordered = sortRequestsForList(requests, this.filterStatus);
+    for (const r of ordered) {
       const card = listDiv.createDiv({ cls: 'tn-req-card' });
       card.addEventListener('click', () => this.renderRequestDetail(r));
       const head = card.createDiv({ cls: 'tn-req-card-head' });
@@ -2199,21 +2212,4 @@ export class RequestsView extends ItemView {
     }
   }
 
-  /** Открывает справку по заполнению заявок. Если заметки нет в вольте — создаёт её. */
-  private async openHelp(): Promise<void> {
-    try {
-      const adapter = this.app.vault.adapter;
-      if (!(await adapter.exists(REQUESTS_HELP_PATH))) {
-        await adapter.write(REQUESTS_HELP_PATH, REQUESTS_HELP_MD);
-      }
-      const file = this.app.vault.getAbstractFileByPath(REQUESTS_HELP_PATH);
-      if (file instanceof TFile) {
-        await this.app.workspace.getLeaf(false).openFile(file);
-      } else {
-        new Notice('Не удалось найти файл справки');
-      }
-    } catch (e: unknown) {
-      new Notice(`Не удалось открыть справку: ${errorMessage(e)}`);
-    }
-  }
 }

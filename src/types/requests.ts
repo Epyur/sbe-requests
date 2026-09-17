@@ -170,6 +170,10 @@ export interface LabRequest {
   amb_pres: string;
   amb_moist: string;
   files: RequestFile[];
+  /** Момент перехода в статус «Завершена» (не updated_at) — приходит с сервера,
+   * используется порядком списка «Завершённые» (2026-09-17). Пусто у заявок, не
+   * завершённых либо закрытых до появления поля в lab-service. */
+  completed_at?: string;
   created_at: string;
   updated_at: string;
   sync_status: 'local' | 'synced';
