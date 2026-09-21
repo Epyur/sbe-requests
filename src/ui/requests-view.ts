@@ -5,6 +5,7 @@ import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { downloadBase64File } from '../../../sbe-core/src/utils/download';
 import { sortRequestsForList } from '../../../sbe-core/src/utils/request-sort';
+import { buildRequestNumbers } from '../../../sbe-core/src/utils/request-number';
 import { renderHelpButton } from '../../../sbe-core/src/ui/help-modal';
 import { REQUESTS_HELP } from './help';
 import { mobileQrDataUrl, renderMobileQr } from '../utils/mobile-link';
@@ -117,7 +118,16 @@ export class RequestsView extends ItemView {
   /** 'all' | 'active' (new/processing) | 'completed' — 2026-09-04, прямой запрос
    * пользователя. */
   private filterStatus: 'all' | 'active' | 'completed' = 'all';
+  /** Важность: '' — фильтр выключен, иначе normal | critical | blocker
+   * (2026-09-21, прямой запрос пользователя; такой же фильтр заведён в ЛИМС и
+   * в веб-портале). */
+  private filterPriority = '';
   private filterTimeout: number | null = null;
+  /** Когда последний раз синхронизация прошла удачно, и текст последнего отказа
+   * (2026-09-21) — нужны только для разбора пустых справочников в форме заявки,
+   * см. warnIfReferenceEmpty. В интерфейсе сами по себе не показываются. */
+  private lastSyncOkAt: Date | null = null;
+  private lastSyncError = '';
   private myRole = '';
   private myEmail = '';
   /** Выбранные заявки для пакетной печати листа QR-меток (id заявки). */
@@ -301,6 +311,7 @@ export class RequestsView extends ItemView {
     this.pageTitleEl.setText(meta.title);
     this.pageSubEl.setText(meta.sub);
 
+    this.clearPendingRerenders();
     this.bodyEl.empty();
     if (this.key === 'requests') {
       this.renderView();
@@ -320,7 +331,27 @@ export class RequestsView extends ItemView {
     return this.myRole === 'admin' || this.myRole === 'superadmin';
   }
 
+  /** Гасит отложенные перерисовки списка (2026-09-21).
+   *
+   * searchTimeout и filterTimeout заводятся при отрисовке списка и живут своей
+   * жизнью. Уходя на карточку заявки или в форму, список стирали через
+   * `container.empty()`, а таймеры не снимали — и сработавший через секунду
+   * `renderView()` затирал уже открытую форму, возвращая на её место список.
+   * Со стороны это выглядело как «форма сама закрылась»: набрал текст в
+   * фильтре, быстро нажал «Редактировать» — и правка исчезла. */
+  private clearPendingRerenders(): void {
+    if (this.searchTimeout) {
+      window.clearTimeout(this.searchTimeout);
+      this.searchTimeout = null;
+    }
+    if (this.filterTimeout) {
+      window.clearTimeout(this.filterTimeout);
+      this.filterTimeout = null;
+    }
+  }
+
   private renderView(): void {
+    this.clearPendingRerenders();
     const container = this.bodyEl;
     container.empty();
 
@@ -396,6 +427,19 @@ export class RequestsView extends ItemView {
     statusSelect.value = this.filterStatus;
     statusSelect.addEventListener('change', () => {
       this.filterStatus = statusSelect.value as 'all' | 'active' | 'completed';
+      this.renderView();
+    });
+
+    const priorityGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
+    priorityGroup.createEl('label', { text: 'Важность', cls: 'tn-req-filter-lbl' });
+    const priorityFilterSelect = priorityGroup.createEl('select', { cls: 'tn-req-select' });
+    priorityFilterSelect.createEl('option', { value: '', text: 'Все' });
+    priorityFilterSelect.createEl('option', { value: 'normal', text: 'Обычный' });
+    priorityFilterSelect.createEl('option', { value: 'critical', text: 'Критический' });
+    priorityFilterSelect.createEl('option', { value: 'blocker', text: 'Блокирующий' });
+    priorityFilterSelect.value = this.filterPriority;
+    priorityFilterSelect.addEventListener('change', () => {
+      this.filterPriority = priorityFilterSelect.value;
       this.renderView();
     });
 
@@ -632,6 +676,11 @@ export class RequestsView extends ItemView {
     } else if (this.filterStatus === 'completed') {
       requests = requests.filter(r => r.status === 'completed');
     }
+    if (this.filterPriority) {
+      // Важность у старых заявок может быть пустой — считаем её обычной, так же
+      // как priorityRank в request-sort.ts и подпись в priorityLabel.
+      requests = requests.filter(r => (r.priority || 'normal') === this.filterPriority);
+    }
     const objNameQ = this.filterObjectName.trim().toLowerCase();
     if (objNameQ) requests = requests.filter(r => this.objectName(r.object_id).toLowerCase().includes(objNameQ));
     const idQ = this.filterIdentifier.trim().toLowerCase();
@@ -660,6 +709,66 @@ export class RequestsView extends ItemView {
     if (projectId <= 0) return 'Без проекта';
     const p = this.plugin.requestsDb.getProjects().find(pr => pr.id === projectId);
     return p ? `${p.code}${p.name ? ' — ' + p.name : ''}` : '—';
+  }
+
+  /** Спрашивает подтверждение, если смена проекта изменит номер для заказчика
+   * (2026-09-21). Возвращает true, если можно сохранять.
+   *
+   * Номер считается той же формулой, что на сервере (общий buildRequestNumbers),
+   * но это только показ: записывает номер сервер. Если посчитать нечем — номера
+   * ещё нет (черновик), или метод с лабой не нашлись в кэше — не выдумываем
+   * пару «было → стало», а предупреждаем общими словами. */
+  private confirmCustomerNumberChange(existing: LabRequest, newProjectId: number): boolean {
+    const method = this.plugin.requestsDb.getMethods().find(m => m.id === existing.method_id);
+    const lab = this.plugin.requestsDb.getLabs().find(l => l.id === existing.lab_id);
+
+    if (!existing.customer_number || !method || existing.number_seq <= 0) {
+      return window.confirm(
+        'Смена проекта изменит номер заявки для заказчика — сервер пересоберёт его '
+        + 'под новый проект. Прежний номер мог уже уйти заказчику. Продолжить?',
+      );
+    }
+
+    const next = buildRequestNumbers({
+      projectCode: this.projectCode(newProjectId),
+      seq: existing.number_seq,
+      year: existing.number_year,
+      labCode: lab ? lab.code : '',
+      methodCode: method.code,
+    });
+    if (next.customer === existing.customer_number) return true;
+
+    return window.confirm(
+      `Номер для заказчика изменится:\n\n${existing.customer_number}\n↓\n${next.customer}\n\n`
+      + 'Прежний номер мог уже уйти заказчику. Продолжить?',
+    );
+  }
+
+  /** Пустой справочник в форме заявки перестаёт молчать (2026-09-21).
+   *
+   * Жалоба пользователя: выбор проекта и группы «иногда становится недоступен»,
+   * помогала только полная перезагрузка Obsidian. Пустой выпадающий список
+   * выглядит ровно так — выбирать нечего, а почему, интерфейс не сообщал. Здесь
+   * человек видит, что делать, а в консоли остаётся след для разбора: что
+   * именно пусто, сколько записей в остальных справочниках (пусто ВСЁ — дело в
+   * синхронизации; пусты только проекты — скорее в правах видимости) и когда
+   * синхронизация последний раз проходила. */
+  private warnIfReferenceEmpty(container: HTMLElement, what: string, count: number): void {
+    if (count > 0) return;
+    const hint = container.createDiv({ cls: 'tn-req-meta tn-req-mb8' });
+    hint.setText(`Справочник ${what} не загружен — нажмите «Синхронизировать». Пока выбирать нечего.`);
+
+    const db = this.plugin.requestsDb;
+    const sizes = [
+      `проекты ${db.getProjects().length}`,
+      `группы ${db.getGroups().length}`,
+      `лаборатории ${db.getLabs().length}`,
+      `методы ${db.getMethods().length}`,
+      `объекты ${db.getObjects().length}`,
+    ].join(', ');
+    const when = this.lastSyncOkAt ? this.lastSyncOkAt.toLocaleString('ru-RU') : 'в этом сеансе ни разу';
+    const why = this.lastSyncError ? `; последний отказ: ${this.lastSyncError}` : '';
+    console.warn(`Заявки: справочник «${what}» пуст. В кэше: ${sizes}. Удачная синхронизация: ${when}${why}`);
   }
 
   /** Группа проекта (0 — публичный/не задана). */
@@ -704,6 +813,7 @@ export class RequestsView extends ItemView {
   }
 
   private renderRequestDetail(req: LabRequest): void {
+    this.clearPendingRerenders();
     const container = this.bodyEl;
     container.empty();
 
@@ -1045,13 +1155,13 @@ export class RequestsView extends ItemView {
     const m = this.plugin.requestsDb.getMethods().find(md => md.id === req.method_id);
     if (!m) return null;
     const l = this.plugin.requestsDb.getLabs().find(lb => lb.id === req.lab_id);
-    const labCode = l ? l.code : '';
-    const seq = parent.number_seq;
-    const year = parent.number_year;
-    return {
-      customer: `${this.projectCode(req.project_id)}-${seq}/${year}-${labCode}-${m.code}`,
-      lab: `${seq}/${year}-${m.code}`,
-    };
+    return buildRequestNumbers({
+      projectCode: this.projectCode(req.project_id),
+      seq: parent.number_seq,
+      year: parent.number_year,
+      labCode: l ? l.code : '',
+      methodCode: m.code,
+    });
   }
 
   // ---- Скачивание и открытие файлов ----
@@ -1104,12 +1214,16 @@ export class RequestsView extends ItemView {
     return cleaned || 'file';
   }
 
+  /** Подписи важности — один набор на плагины, ЛИМС и портал (2026-09-21,
+   * решение пользователя). Пояснение про остановку других заявок живёт только
+   * в форме, где важность ВЫБИРАЮТ; здесь важность показывается в строке с
+   * другими полями, и длинная скобка их разносит. */
   private priorityLabel(priority: string): string {
     switch (priority) {
-      case 'critical': return 'Критичный';
-      case 'blocker': return 'Блокер (остановить исполнение других заявок)';
-      case 'normal': return 'Средний';
-      default: return priority || 'Средний';
+      case 'critical': return 'Критический';
+      case 'blocker': return 'Блокирующий';
+      case 'normal': return 'Обычный';
+      default: return priority || 'Обычный';
     }
   }
 
@@ -1140,6 +1254,7 @@ export class RequestsView extends ItemView {
   }
 
   private showRequestForm(existing: LabRequest | null): void {
+    this.clearPendingRerenders();
     const container = this.bodyEl;
     container.empty();
 
@@ -1155,9 +1270,9 @@ export class RequestsView extends ItemView {
     // Приоритет
     const priorityLabel = container.createEl('label', { text: 'Приоритет', cls: 'tn-req-label' });
     const prioritySelect = container.createEl('select', { cls: 'tn-req-select' });
-    prioritySelect.createEl('option', { value: 'normal', text: 'Средний' });
-    prioritySelect.createEl('option', { value: 'critical', text: 'Критичный' });
-    prioritySelect.createEl('option', { value: 'blocker', text: 'Блокер (остановить исполнение других заявок)' });
+    prioritySelect.createEl('option', { value: 'normal', text: 'Обычный' });
+    prioritySelect.createEl('option', { value: 'critical', text: 'Критический' });
+    prioritySelect.createEl('option', { value: 'blocker', text: 'Блокирующий (остановить исполнение других заявок)' });
     prioritySelect.value = existing ? existing.priority : 'normal';
 
     // Цель испытания
@@ -1334,14 +1449,17 @@ export class RequestsView extends ItemView {
     }
     if (existing) projectSelect.value = String(existing.project_id);
     else if (this.selectedProjectId !== null && this.selectedProjectId > 0) projectSelect.value = String(this.selectedProjectId);
+    this.warnIfReferenceEmpty(container, 'проектов', projectList.length);
 
     // Группа
     const groupLabel = container.createEl('label', { text: 'Группа (видимость)', cls: 'tn-req-label' });
     const groupSelect = container.createEl('select', { cls: 'tn-req-select' });
     groupSelect.createEl('option', { value: '0', text: '— Без группы —' });
-    for (const g of this.plugin.requestsDb.getGroups()) {
+    const groupList = this.plugin.requestsDb.getGroups();
+    for (const g of groupList) {
       groupSelect.createEl('option', { value: String(g.id), text: g.name });
     }
+    this.warnIfReferenceEmpty(container, 'групп', groupList.length);
     if (existing) groupSelect.value = String(existing.group_id);
     else {
       // Новая заявка: подставляем группу выбранного проекта, если она задана.
@@ -1537,6 +1655,16 @@ export class RequestsView extends ItemView {
 
       const priority = prioritySelect.value || 'normal';
       const testPurpose = purposeSelect.value || '';
+
+      // Смена проекта у существующей заявки меняет её номер для заказчика: код
+      // проекта — первая часть номера (см. buildNumbers на сервере). Номер мог
+      // уже уйти заказчику, поэтому спрашиваем, а не пересчитываем молча
+      // (2026-09-21, решение пользователя). Пересобирает номер сервер —
+      // rebuildCustomerNumber; здесь только предпросмотр той же формулой.
+      if (existing && Number(projectSelect.value) !== existing.project_id
+        && !this.confirmCustomerNumberChange(existing, Number(projectSelect.value))) {
+        return;
+      }
 
       saveBtn.setText('⏳');
       saveBtn.setAttr('disabled', 'true');
@@ -2203,10 +2331,13 @@ export class RequestsView extends ItemView {
   async syncAndRender(): Promise<void> {
     try {
       await this.plugin.syncService.sync();
+      this.lastSyncOkAt = new Date();
+      this.lastSyncError = '';
       this.rerenderSidebar();
       await this.renderPage();
     } catch (e: unknown) {
-      new Notice(`Заявки: синхронизация не выполнена — ${errorMessage(e)}`);
+      this.lastSyncError = errorMessage(e);
+      new Notice(`Заявки: синхронизация не выполнена — ${this.lastSyncError}`);
       this.rerenderSidebar();
       await this.renderPage();
     }

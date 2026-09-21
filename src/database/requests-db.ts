@@ -268,11 +268,33 @@ export class RequestsDatabase {
 
   /** Заменяет справочники/проекты/группы слепком с сервера (они каноничны целиком). */
   replaceReferenceData(pull: Pick<RequestsDbData, 'projects' | 'groups' | 'labs' | 'methods' | 'objects'>): void {
-    this.data.projects = Array.isArray(pull.projects) ? pull.projects : this.data.projects;
-    this.data.groups = Array.isArray(pull.groups) ? pull.groups : this.data.groups;
-    this.data.labs = Array.isArray(pull.labs) ? pull.labs : this.data.labs;
-    this.data.methods = Array.isArray(pull.methods) ? pull.methods : this.data.methods;
-    this.data.objects = Array.isArray(pull.objects) ? pull.objects : this.data.objects;
+    this.data.projects = this.mergedReference('проекты', pull.projects, this.data.projects);
+    this.data.groups = this.mergedReference('группы', pull.groups, this.data.groups);
+    this.data.labs = this.mergedReference('лаборатории', pull.labs, this.data.labs);
+    this.data.methods = this.mergedReference('методы', pull.methods, this.data.methods);
+    this.data.objects = this.mergedReference('объекты', pull.objects, this.data.objects);
+  }
+
+  /** Пустой справочник с сервера НЕ затирает непустой кэш (2026-09-21).
+   *
+   * Раньше пустой массив считался законным значением, и один неудачный pull
+   * оставлял плагин без списка проектов: в форме заявки было нечего выбрать до
+   * следующей удачной синхронизации. А пустым список приезжал легко — сервер
+   * фильтрует проекты по видимости, и сбой проверки членства в группе выглядел
+   * как «проектов нет» (починено там же, loadVisibleProjects).
+   *
+   * Справочники каноничны целиком, поэтому настоящее удаление последней записи
+   * тоже приедет пустым массивом — и будет отвергнуто. Это осознанный размен:
+   * лишний раз показать устаревший справочник безопаснее, чем оставить человека
+   * без выбора; пустым он станет после перезапуска (init читает файл как есть).
+   * Заявок правило не касается — у них своё слияние по updated_at. */
+  private mergedReference<T>(what: string, incoming: T[] | undefined, current: T[]): T[] {
+    if (!Array.isArray(incoming)) return current;
+    if (incoming.length === 0 && current.length > 0) {
+      console.warn(`Заявки: сервер прислал пустой справочник «${what}» — оставляем прежние ${current.length} записей.`);
+      return current;
+    }
+    return incoming;
   }
 
   private compareTime(a: string, b: string): number {
