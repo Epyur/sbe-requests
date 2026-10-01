@@ -3,7 +3,7 @@ import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import type { RequestsDatabase } from '../database/requests-db';
 import type {
-  AuditLogEntry, LabRequest, ProtocolResponse, PullResponse, PushResponse, UploadFileResponse,
+  AuditLogEntry, LabRequest, ProtocolResponse, PullResponse, PushOutcome, PushResponse, UploadFileResponse,
 } from '../types/requests';
 
 export interface SyncResult {
@@ -31,6 +31,7 @@ function readFireGroupValue(data: unknown, field: string): string | undefined {
 export class RequestsSyncService {
   private db: RequestsDatabase;
   private getApiUrl: () => string;
+  private syncInFlight: Promise<SyncResult> | null = null;
 
   constructor(db: RequestsDatabase, getApiUrl: () => string) {
     this.db = db;
@@ -42,19 +43,32 @@ export class RequestsSyncService {
   }
 
   async sync(): Promise<SyncResult> {
+    if (this.syncInFlight) return this.syncInFlight;
+    const running = this.syncOnce();
+    this.syncInFlight = running;
+    try {
+      return await running;
+    } finally {
+      if (this.syncInFlight === running) this.syncInFlight = null;
+    }
+  }
+
+  private async syncOnce(): Promise<SyncResult> {
     const token = await this.getToken();
     const dirty = this.db.getAll().filter(r => r.sync_status === 'local');
     let pushed = 0;
     if (dirty.length > 0) {
+      const snapshots = new Map(dirty.map(r => [r.id, r.updated_at]));
       const res = await this.push(token, dirty);
       pushed = res.inserted + res.updated;
-      const createdByClient = new Map<number, LabRequest>();
-      for (const c of res.created) createdByClient.set(c.client_id, c.request);
+      const outcomes = new Map<number, PushOutcome>();
+      for (const outcome of res.outcomes) outcomes.set(outcome.client_id, outcome);
       for (const r of dirty) {
-        const server = createdByClient.get(r.id);
-        if (server) {
-          this.db.replaceLocalRequest(r.id, server);
-        } else {
+        const outcome = outcomes.get(r.id);
+        if (!outcome || snapshots.get(r.id) !== r.updated_at) continue;
+        if (outcome.status === 'created' && outcome.request) {
+          this.db.replaceLocalRequest(r.id, outcome.request);
+        } else if (outcome.status === 'updated') {
           r.sync_status = 'synced';
         }
       }
@@ -118,10 +132,11 @@ export class RequestsSyncService {
         inserted: data.inserted || 0,
         updated: data.updated || 0,
         created: Array.isArray(data.created) ? data.created : [],
+        outcomes: Array.isArray(data.outcomes) ? data.outcomes : [],
       };
     } catch (e: unknown) {
       console.warn('Заявки: не JSON в ответе push:', errorMessage(e));
-      return { inserted: 0, updated: 0, created: [] };
+      throw new Error('Сервер вернул не JSON при синхронизации');
     }
   }
 

@@ -204,6 +204,15 @@ export interface PushResponse {
   inserted: number;
   updated: number;
   created: Array<{ client_id: number; group_key?: string; request: LabRequest }>;
+  outcomes: PushOutcome[];
+}
+
+export interface PushOutcome {
+  client_id: number;
+  request_id?: number;
+  status: 'created' | 'updated' | 'rejected' | 'failed';
+  request?: LabRequest;
+  error?: string;
 }
 
 /** Ответ сервера на загрузку файла. */
