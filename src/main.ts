@@ -1,4 +1,5 @@
-import { Plugin, WorkspaceLeaf } from 'obsidian';
+import { Notice, Plugin, WorkspaceLeaf } from 'obsidian';
+import { diagnoseBlockedSelects } from './utils/diagnose-ui';
 import { RequestsDatabase } from './database/requests-db';
 import { RequestsSyncService } from './services/sync.service';
 import { RequestsView, SBE_REQUESTS_VIEW_TYPE } from './ui/requests-view';
@@ -36,6 +37,20 @@ export default class SbeRequestsPlugin extends Plugin {
 
     this.addSettingTab(new RequestsSettingsTab(this.app, this));
 
+    // Снимок состояния экрана для разбора жалобы «выбор проекта заблокирован»
+    // (2026-09-21). Запускать В МОМЕНТ, когда список не открывается: команда
+    // отвечает на главный вопрос — перекрыт селектор чем-то или нет. Только
+    // читает DOM. Подробности — src/utils/diagnose-ui.ts.
+    this.addCommand({
+      id: 'diagnose-blocked-selects',
+      name: 'Диагностика: почему не открывается список',
+      callback: () => {
+        const { report, verdict } = diagnoseBlockedSelects();
+        console.log(`Заявки — диагностика экрана:\n${report}`);
+        new Notice(`Заявки: ${verdict}\nПодробности — в консоли.`, 10000);
+      },
+    });
+
     publishService<SbeRequestsApi>('sbe-requests', {
       open: async () => {
         await this.activateView();
@@ -47,16 +62,9 @@ export default class SbeRequestsPlugin extends Plugin {
 
     if (this.settings.lastAnnouncedVersion !== this.manifest.version) {
       void this.announceUpdateSafely(
-        'В списке заявок появился отбор по важности — можно показать только ' +
-        'обычные, только критические или только блокирующие. Сами слова ' +
-        'важности теперь одинаковы во всех приложениях: «Обычный», ' +
-        '«Критический», «Блокирующий». Если у заявки сменить проект, ' +
-        'приложение покажет, каким станет её номер для заказчика, и спросит ' +
-        'подтверждение — раньше номер оставался со старым проектом. Исправлена ' +
-        'ошибка, из-за которой начатая правка заявки могла сама закрыться, ' +
-        'если перед этим что-то набрать в фильтрах. А если список проектов или ' +
-        'групп не успел загрузиться, приложение прямо об этом скажет, вместо ' +
-        'того чтобы показывать пустой список.',
+        'Добавлена команда диагностики для случая, когда список в форме заявки ' +
+        'не открывается. Она проверяет, есть ли данные в списках и не перекрывает ' +
+        'ли их другой элемент, а подробный результат сохраняет в консоли.',
       );
     }
   }
