@@ -13,6 +13,10 @@ export interface SbeRequestsSettings {
   /** Последняя версия, о которой опубликована новость в ЦУП (2026-08-22,
    * см. announceUpdate ниже) — не даёт публиковать новость на каждый запуск. */
   lastAnnouncedVersion?: string;
+  /** Выбранный человеком порядок списка заявок (2026-10-03): 'default' —
+   * правило по фильтру статуса, иначе поле+направление (см. RequestSortKey в
+   * sbe-core/src/utils/request-sort.ts). Хранится как preference. */
+  requestSort?: string;
 }
 
 const DEFAULT_SETTINGS: SbeRequestsSettings = {
@@ -62,10 +66,9 @@ export default class SbeRequestsPlugin extends Plugin {
 
     if (this.settings.lastAnnouncedVersion !== this.manifest.version) {
       void this.announceUpdateSafely(
-        'Синхронизация заявок стала надёжнее: если сервер не принял конкретную ' +
-        'правку, приложение не считает её сохранённой и повторит отправку при ' +
-        'следующей синхронизации. Одновременные нажатия синхронизации больше не ' +
-        'могут потерять более свежие изменения.',
+        'В списке заявок появился выбор порядка: дата создания или дата завершения, ' +
+        'по возрастанию или убыванию. Выбранный порядок запоминается. По умолчанию ' +
+        'список сортируется как раньше.',
       );
     }
   }

@@ -5,6 +5,7 @@ import { getService } from '../../../sbe-core/src/bridge';
 import { errorMessage } from '../../../sbe-core/src/utils/errors';
 import { downloadBase64File } from '../../../sbe-core/src/utils/download';
 import { sortRequestsForList } from '../../../sbe-core/src/utils/request-sort';
+import type { RequestSortKey } from '../../../sbe-core/src/utils/request-sort';
 import { buildRequestNumbers } from '../../../sbe-core/src/utils/request-number';
 import { renderHelpButton } from '../../../sbe-core/src/ui/help-modal';
 import { REQUESTS_HELP } from './help';
@@ -350,6 +351,20 @@ export class RequestsView extends ItemView {
     }
   }
 
+  /** Выбранный порядок списка заявок (2026-10-03): в настройках плагина,
+   * переживает перезапуск. 'default' — прежнее правило по фильтру статуса. */
+  private currentRequestSort(): RequestSortKey {
+    const v = this.plugin.settings.requestSort;
+    return v === 'created-asc' || v === 'created-desc'
+      || v === 'completed-asc' || v === 'completed-desc' ? v : 'default';
+  }
+
+  private async setRequestSort(key: RequestSortKey): Promise<void> {
+    this.plugin.settings.requestSort = key;
+    await this.plugin.saveSettings();
+    this.renderView();
+  }
+
   private renderView(): void {
     this.clearPendingRerenders();
     const container = this.bodyEl;
@@ -428,6 +443,19 @@ export class RequestsView extends ItemView {
     statusSelect.addEventListener('change', () => {
       this.filterStatus = statusSelect.value as 'all' | 'active' | 'completed';
       this.renderView();
+    });
+
+    const sortGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
+    sortGroup.createEl('label', { text: 'Сортировка', cls: 'tn-req-filter-lbl' });
+    const sortSelect = sortGroup.createEl('select', { cls: 'tn-req-select' });
+    sortSelect.createEl('option', { value: 'default', text: '— По умолчанию —' });
+    sortSelect.createEl('option', { value: 'created-desc', text: 'Дата создания: сначала новые' });
+    sortSelect.createEl('option', { value: 'created-asc', text: 'Дата создания: сначала старые' });
+    sortSelect.createEl('option', { value: 'completed-desc', text: 'Дата завершения: сначала новые' });
+    sortSelect.createEl('option', { value: 'completed-asc', text: 'Дата завершения: сначала старые' });
+    sortSelect.value = this.currentRequestSort();
+    sortSelect.addEventListener('change', () => {
+      void this.setRequestSort(sortSelect.value as RequestSortKey);
     });
 
     const priorityGroup = filterBar.createDiv({ cls: 'tn-req-filter-group' });
@@ -532,7 +560,7 @@ export class RequestsView extends ItemView {
     // «Завершённые» — по дате закрытия. Раньше список шёл по номеру
     // (number_year + number_seq), который зависит от года и лаборатории и с
     // реальным порядком поступления совпадает не всегда.
-    const ordered = sortRequestsForList(requests, this.filterStatus);
+    const ordered = sortRequestsForList(requests, this.filterStatus, this.currentRequestSort());
     for (const r of ordered) {
       const card = listDiv.createDiv({ cls: 'tn-req-card' });
       card.addEventListener('click', () => this.renderRequestDetail(r));
