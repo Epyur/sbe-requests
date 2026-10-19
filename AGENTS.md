@@ -35,7 +35,7 @@ sbe-requests и sbe-lims, живёт в папке основного/более
 |---|---|
 | `src/main.ts` | `SbeRequestsPlugin`: настройки, БД, syncService, view, publishService |
 | `src/database/requests-db.ts` | `RequestsDatabase`: кэш JSON, mergeRequestsFromServer (LWW), replaceReferenceData, dedupe |
-| `src/services/sync.service.ts` | `RequestsSyncService`: sync/push/pull, создание справочников/проектов/групп, участники, статусы, файлы, permissions/common-access, JWT, multipart, таймауты |
+| `src/services/sync.service.ts` | `RequestsSyncService`: sync/push/pull, создание справочников/проектов/групп, участники, статусы, файлы, протокол/ИИ-отчёт (`report.docx`), permissions/common-access, JWT, multipart, таймауты |
 | `src/ui/requests-view.ts` | `RequestsView`: дерево проектов → заявки, карточка заявки, создание/правка, группы, справочники, файлы, статусы |
 | `src/ui/settings-tab.ts` | Настройки: apiUrl + «Права доступа» (роли viewer/editor/admin + общий доступ) |
 | `src/types/requests.ts` | `LabRequest`, `LabProject`, `LabGroup`, `Lab`, `LabMethod`, `LabObject`, `RequestMethod`, `RequestFile`, `RequestsDbData`, `PullResponse`, `PushResponse`, `UploadFileResponse`, `ProtocolResponse{html, docx_base64, generated_at}` (2026-08-23; заменил `ShortViewSection`/`ShortViewTable`/`ShortViewColumn`/`ShortViewSummaryRow` от 2026-08-22, см. sbe-lims) |
@@ -55,6 +55,29 @@ sbe-requests и sbe-lims, живёт в папке основного/более
   документацию, подготовить сообщение для коммита и СПРОСИТЬ подтверждение commit/push.**
 
 ## История работ
+
+### 2026-10-19 — v1.0.10 (кнопка «Скачать протокол» отдаёт ИИ-отчёт)
+
+По прямому запросу пользователя: кнопка «📄 Скачать протокол (Word)» в карточке
+заявки теперь скачивает **ИИ-отчёт на бланке** — тот же документ, что отдаёт
+кнопка «📄 ИИ-отчёт» в ЛИМС (2026-10-16): протокол + аналитические разделы по
+`methods.report_instruction` + приложение со статистикой по аналогичным
+объектам. Скачивается через `GET /api/lab/requests/{id}/report.docx` (бинарный
+ответ); если отчёт ещё не собран, сервер собирает его на месте — поэтому перед
+скачиванием показывается «Формирую отчёт…», а таймаут запроса увеличен до 120 с.
+
+- `sync.service.ts`: новый `getReport(requestId)` (бинарный ответ → base64,
+  хелпер `arrayBufferToBase64` чанками); прежний `getProtocolDocx` удалён —
+  обычный протокол из плагина больше не скачивается.
+- `requests-view.ts`: кнопка **больше не под гейтом `canEdit`** — заказчик
+  (владелец заявки) и участник группы тоже должны получать отчёт. Серверный
+  `report.docx` это уже разрешал: `requireLabRead` включает `requestVisible`
+  (владелец/группа), а не только лабораторные роли. Excel-выгрузка осталась
+  editor+ (сервер требует editor).
+- Файл называется `report_<номер>.docx` (как в ЛИМС), а не `protocol_...`.
+
+Проверки: `npx tsc --noEmit` EXIT=0, `npm run build` OK. Версия 1.0.9 →
+**1.0.10**. Та же правка в веб-портале — см. `sbe-web/AGENTS.md` (v0.1.57).
 
 ### 2026-10-03 — v1.0.9 (выбор порядка списка заявок)
 

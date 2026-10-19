@@ -395,24 +395,20 @@ export class RequestsSyncService {
     }
   }
 
-  /** Полный протокол (template=protocol, format=full — с DOCX) — для кнопки
-   * «Скачать протокол (Word)» прямо со страницы заявок (2026-08-24, по
-   * прямому запросу пользователя: раньше DOCX было доступно только в ЛИМС). */
-  async getProtocolDocx(requestId: number): Promise<string> {
+  /** ИИ-отчёт по испытанию (DOCX на бланке организации) — тот же документ,
+   * что отдаёт кнопка «📄 ИИ-отчёт» в ЛИМС (2026-10-19): протокол + ИИ-разделы
+   * по инструкции метода + приложение со статистикой по аналогам. Бинарный
+   * ответ, поэтому requestUrl напрямую (обёртка request() отдаёт ещё и
+   * arrayBuffer). Если отчёт ещё не собран — сервер собирает его на месте. */
+  async getReport(requestId: number): Promise<string> {
     const token = await this.getToken();
     const res = await this.request({
-      url: `${this.baseUrl}/api/lab/requests/${requestId}/protocol?template=protocol&format=full`,
-      method: 'POST',
+      url: `${this.baseUrl}/api/lab/requests/${requestId}/report.docx`,
+      method: 'GET',
       headers: { Authorization: `Bearer ${token}` },
-    });
+    }, 120000);
     this.assertOk(res);
-    try {
-      const parsed = JSON.parse(res.text) as ProtocolResponse;
-      return parsed.docx_base64;
-    } catch (e: unknown) {
-      console.warn('Заявки: не JSON в ответе protocol:', errorMessage(e));
-      throw new Error('Сервер вернул не JSON для протокола');
-    }
+    return arrayBufferToBase64(res.arrayBuffer);
   }
 
   /** Таблица всех данных заявки (серии + агрегаты/статистика) в Excel
@@ -607,4 +603,17 @@ export class RequestsSyncService {
       if (timer !== undefined) window.clearTimeout(timer);
     }
   }
+}
+
+/** ArrayBuffer → base64, в чанках — String.fromCharCode(...bytes) на весь
+ * буфер разом упёрся бы в лимит аргументов стека (тот же хелпер, что в sbe-lims
+ * sync.service.ts; DOCX-отчёт — сотни КБ, поэтому чанками обязательно). */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }

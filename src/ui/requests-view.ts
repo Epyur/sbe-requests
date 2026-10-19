@@ -973,21 +973,29 @@ export class RequestsView extends ItemView {
       // Скачивание протокола (Word) и таблицы всех данных (Excel) прямо со
       // страницы заявок (2026-08-24, по прямому запросу пользователя — раньше
       // Word был доступен только в ЛИМС, Excel не было вообще нигде).
+      // С 2026-10-19 кнопка «Скачать протокол» отдаёт ИИ-отчёт на бланке —
+      // тот же документ, что кнопка «📄 ИИ-отчёт» в ЛИМС (протокол + ИИ-разделы
+      // по инструкции метода + приложение со статистикой по аналогам).
+      // Доступна ВСЕМ, кому видна заявка, включая заказчика: серверный
+      // GET .../report.docx гейтится requireLabRead (владелец заявки/участник
+      // группы проходят), а не editor-ролью — заказчик должен получать отчёт
+      // так же, как получает его письмом. Excel-выгрузка остаётся editor+.
+      const exportRow = methodsDiv.createDiv({ cls: 'tn-req-flex tn-req-mt8' });
+      const wordBtn = exportRow.createEl('button', { text: '📄 Скачать протокол (Word)', cls: 'tn-btn tn-btn-ghost' });
+      wordBtn.addEventListener('click', async () => {
+        wordBtn.setAttr('disabled', 'true');
+        new Notice('Формирую отчёт…');
+        try {
+          const docxBase64 = await this.plugin.syncService.getReport(req.id);
+          downloadBase64File(docxBase64, `report_${this.requestNumber(req).replace(/\//g, '-')}.docx`,
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        } catch (e: unknown) {
+          new Notice(`Ошибка скачивания: ${errorMessage(e)}`);
+        } finally {
+          wordBtn.removeAttribute('disabled');
+        }
+      });
       if (this.canEdit) {
-        const exportRow = methodsDiv.createDiv({ cls: 'tn-req-flex tn-req-mt8' });
-        const wordBtn = exportRow.createEl('button', { text: '📄 Скачать протокол (Word)', cls: 'tn-btn tn-btn-ghost' });
-        wordBtn.addEventListener('click', async () => {
-          wordBtn.setAttr('disabled', 'true');
-          try {
-            const docxBase64 = await this.plugin.syncService.getProtocolDocx(req.id);
-            downloadBase64File(docxBase64, `protocol_${this.requestNumber(req).replace(/\//g, '-')}.docx`,
-              'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-          } catch (e: unknown) {
-            new Notice(`Ошибка скачивания: ${errorMessage(e)}`);
-          } finally {
-            wordBtn.removeAttribute('disabled');
-          }
-        });
         const excelBtn = exportRow.createEl('button', { text: '📊 Скачать таблицу (Excel)', cls: 'tn-btn tn-btn-ghost' });
         excelBtn.addEventListener('click', async () => {
           excelBtn.setAttr('disabled', 'true');
